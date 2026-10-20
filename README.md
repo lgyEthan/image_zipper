@@ -1,0 +1,145 @@
+# Image Zipper
+
+Windows와 Mac에서 실행하는 **오프라인 이미지·PDF 압축 프로그램**입니다. 여러 파일을 불러와 DPI 또는 최대 파일 용량을 기준으로 줄이고, 선택한 폴더에 개별 저장하거나 하나의 PDF로 병합합니다.
+
+## 할 수 있는 일
+
+- PNG, JPEG, HEIC/HEIF, TIFF, BMP, WebP, AVIF, PDF 불러오기. GIF/APNG, ICO, JPEG 2000, PPM 등 Pillow가 지원하는 추가 형식도 읽습니다.
+- JPEG, PNG, WebP, AVIF, TIFF 출력. 기존 PDF는 PDF로 유지합니다.
+- 파일·폴더 추가, 드래그 앤 드롭, 병합 순서 변경, 일괄 저장, 취소, 결과 보고서.
+- **DPI 지정**: 인쇄 크기를 유지하면서 픽셀을 실제로 줄입니다. DPI 메타데이터만 바꾸는 방식이 아닙니다.
+- **용량 상한 지정**: 품질과 픽셀 수를 탐색하고 실제 인코딩한 바이트 수로 상한을 검사합니다.
+- 선택 파일의 빠른 추정값 → 백그라운드 시험 압축으로 계산한 **용량·유효 DPI·첫 페이지 미리보기**.
+- 이미지 여러 장과 여러 페이지 TIFF를 PDF로 병합. PDF 파일도 페이지 단위로 함께 넣을 수 있습니다.
+- PDF 안의 **텍스트·벡터·페이지 크기를 유지**하면서 적합한 내부 이미지를 줄이고 스트림을 최적화합니다.
+- EXIF 회전 보정, ICC 프로파일 보존, 알파 채널 지원, 동일 이름 충돌 방지, 원본 파일 보호.
+
+네트워크 업로드·계정·서버는 사용하지 않습니다.
+
+## 실행
+
+### 데스크톱 실행 파일
+
+[GitHub Actions](https://github.com/lgyEthan/image_zipper/actions/workflows/build.yml)의 성공한 실행에서 OS에 맞는 artifact를 받습니다. 안의 ZIP을 다시 풀고 실행하세요.
+
+| 플랫폼 | 파일 | 기준 |
+|---|---|---|
+| Windows x64 | `ImageZipper/ImageZipper.exe` | Windows 10/11 x64, CI는 Windows Server 2025 |
+| Mac Apple silicon | `ImageZipper.app` | macOS 15 이상, arm64 |
+| Mac Intel | `ImageZipper.app` | macOS 15 이상, x86_64 |
+
+폴더 안의 라이브러리까지 함께 있어야 합니다. 이 개발 빌드는 배포용 서명·Apple 공증을 하지 않았습니다. macOS는 로컬 ad-hoc 서명으로 빌드합니다. 각 플랫폼에서 네이티브 코덱과 GUI를 실행하는 패키지 자체 테스트를 수행합니다.
+
+### 소스에서 실행
+
+Python **3.12 이상**을 사용합니다. 의존성 버전은 `pyproject.toml`에 고정되어 있습니다.
+
+```bash
+python -m venv .venv
+```
+
+macOS:
+
+```bash
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -m image_zipper
+```
+
+Windows PowerShell:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.venv\Scripts\python.exe -m image_zipper
+```
+
+## 사용 방법
+
+1. 파일이나 폴더를 추가합니다. 목록 순서가 PDF 병합 순서입니다.
+2. `각 파일을 개별 저장` 또는 `하나의 PDF로 병합`을 선택합니다.
+3. 프리셋과 크기 기준을 고릅니다. 인쇄 너비를 알고 있으면 mm로 지정합니다.
+4. 파일을 선택하면 즉시 추정값이 나오고, 시험 압축이 끝나면 실제 바이트 수와 DPI로 바뀝니다.
+5. 저장 폴더를 고르고 저장합니다. 결과는 `_small` 이름으로 저장하고, 기존 파일이 있으면 번호를 붙입니다.
+
+`용량 상한`은 **개별 저장 시 각 출력 파일**, 병합 시 **최종 PDF 전체**에 적용합니다. 단위는 MiB(1,048,576바이트)입니다. 여러 장의 TIFF/GIF/APNG는 각 프레임을 별도 정지 이미지 또는 PDF 페이지로 출력합니다. 애니메이션 재생 시간은 보존하지 않습니다. 개별 파일의 미리보기는 첫 프레임만 계산하며, 모든 프레임은 저장 시 각각 검증합니다.
+
+`최소 DPI`와 `최소 품질`을 지키면서 상한을 달성하지 못하면 **해당 출력은 저장하지 않고 이유를 표시**합니다. 이미 저장된 다른 파일은 유지합니다. 파일별 결과와 오류는 출력 폴더의 `image_zipper_report.json`에 기록합니다.
+
+### DPI를 해석하는 방법
+
+`DPI = 픽셀 수 / 인쇄 크기(inch)`입니다. 예를 들어 1,800 px 이미지를 6 inch 너비로 인쇄하면 300 DPI입니다. 같은 파일을 3 inch로 인쇄하면 600 DPI입니다.
+
+- 인쇄 너비를 지정하면 종횡비를 유지해 물리적 크기를 정합니다.
+- 지정하지 않으면 원본의 가로·세로 DPI를 사용합니다. 회전 이미지에서는 DPI 축도 바꿉니다.
+- DPI 정보가 없으면 기본 300 DPI를 **가정**하며, 화면과 결과에 표시합니다.
+- 기존 PDF에서는 이미지의 실제 배치 크기, Form 변환, 회전, 재사용 위치, `/UserUnit`을 고려합니다. PDF 페이지 자체에 단일 DPI가 있는 것은 아닙니다.
+- 벡터만 있는 PDF에는 DPI를 만들어 붙이지 않습니다. 측정 가능한 이미지가 없다고 표시합니다.
+- 확대 보간하지 않으므로 저해상도 원본을 고해상도로 복원하지 않습니다. 최소 DPI 역시 원본에 이미 존재하는 저해상도를 높이지 않습니다.
+
+### 프리셋
+
+| 프리셋 | DPI | 최대 / 최소 인코더 품질 | 용량 모드 최소 DPI | JPEG 방식 |
+|---|---:|---:|---:|---|
+| 출판 · 사진 | 300 | 95 / 90 | 300 | 최적화 progressive JPEG, 4:4:4 |
+| 출판 · 도표 | 600 | 손실 코덱 사용 안 함 | 300 | PNG/TIFF 또는 lossless WebP |
+| 균형 | 150 | 86 / 76 | 96 | Jpegli, 4:2:0 |
+| 작은 파일 | 96 | 78 / 60 | 72 | Jpegli, 4:2:0 |
+
+품질 수치는 인코더 설정값이며, 지각 품질을 보장하는 점수나 코덱 간 동등한 척도가 아닙니다. 도표에서 **픽셀까지 보존**하려면 `원본 픽셀 수 유지`를 함께 선택하세요. 출판사별 요구 해상도, 색상 모드, PDF/X 조건은 다릅니다.
+
+## 압축 방식과 경계
+
+구체적인 조사 출처와 선택 근거는 [알고리즘 조사](docs/algorithm-research.md)에 정리했습니다.
+
+- JPEG: **Google Jpegli** 또는 색상 해상도를 줄이지 않는 **4:4:4 progressive JPEG**.
+- PNG: **OxiPNG**. 색상 수 감소는 정확히 동일한 픽셀로 표현할 수 있을 때만 수행하며, 투명 픽셀의 숨은 RGB도 임의로 변경하지 않습니다.
+- WebP/AVIF: 네이티브 인코더. AVIF는 4:4:4, WebP는 도표 모드에서 lossless.
+- 리샘플링: **Lanczos + 정수 축소 최적화**, 반복 인코딩 손상을 피하기 위해 모든 후보를 원본 픽셀에서 생성합니다.
+- PDF: pikepdf/qpdf로 스트림 최적화, 내부 이미지의 유효 DPI에 맞춰 선택적으로 리샘플링. 페이지 전체를 이미지로 바꾸지 않습니다. 미리보기만 PDFium으로 렌더링합니다.
+- 같은 형식·같은 픽셀 수의 원본이 더 작고 설정을 충족하면 용량/원본 모드에서 원본 바이트를 사용합니다.
+
+**보존을 우선해 변경하지 않는 PDF 이미지**: 마스크·투명도, CMYK/특수 색상, 사용자 Decode 배열, JPEG2000/JBIG2/CCITT, 고비트 심도, 패턴/Type3/주석 내부 이미지, 인라인 이미지 등입니다. 그 결과 지정 DPI보다 높은 이미지가 남거나 용량 상한을 달성하지 못할 수 있으며 이를 표시합니다. 폰트·벡터가 대부분인 파일, 이미 효율적으로 압축된 파일은 큰 폭으로 줄어들지 않을 수 있습니다. 무손실·출판 품질·임의의 작은 용량을 동시에 보장할 수는 없습니다.
+
+**현 버전 범위**:
+
+- HEIC/AVIF는 8비트 SDR 경로입니다. HDR, gain map, depth 정보 보존용 도구가 아닙니다.
+- 16비트 회색조 PNG/TIFF는 원본 해상도의 무손실 출력만 지원합니다. 고비트 심도 축소를 요구하면 명시적으로 거부합니다. 모든 16비트 RGB TIFF나 RAW 형식 지원을 의미하지 않습니다.
+- ICC 없는 CMYK는 자동/TIFF 출력으로 보존합니다. RGB 변환을 명시하면 색상 기준 부재를 오류로 알립니다.
+- 새 이미지 출력에는 ICC와 해상도를 기록하고, 카메라 EXIF/XMP·GPS·썸네일은 복사하지 않습니다. 원본 바이트를 재사용한 파일은 기존 메타데이터를 유지합니다.
+- 암호화 또는 전자서명된 PDF는 수정하지 않습니다.
+- PDF 병합은 페이지를 가져옵니다. 기존 문서 전체의 책갈피·양식 필드·전자서명을 결합하지 않습니다.
+- PDF/A·PDF/X 검증이나 출판사 승인 자동 판정은 제공하지 않습니다.
+- 용량 탐색은 제한된 횟수의 실측 탐색입니다. 바이트 상한 준수는 검증하지만 수학적으로 최적인 해상도·시각 품질을 보장하지 않습니다.
+
+## CLI
+
+```bash
+# 150 DPI로 일괄 저장
+image-zipper-cli photos/ -o output/ --dpi 150
+
+# 파일별 최대 2 MiB, 100 mm 인쇄 너비 기준
+image-zipper-cli photos/ -o output/ --mode size --max-mib 2 --print-width-mm 100 --format jpeg
+
+# 실제 시험 압축으로 예상값만 확인
+image-zipper-cli figure.png --mode size --max-mib 0.5 --estimate
+
+# 입력 순서대로 하나의 PDF. 최종 PDF 전체가 5 MiB 이하여야 저장
+image-zipper-cli figure1.png figure2.tif paper.pdf -o output/ --merge combined.pdf --mode size --max-mib 5
+
+# 픽셀까지 보존하는 도표 압축
+image-zipper-cli figure.png --mode original --artwork --format png -o output/
+```
+
+CLI는 하나라도 실패하면 종료 코드 1을 반환합니다. 여러 페이지 입력의 `--estimate`는 첫 프레임, PDF는 문서 전체를 계산합니다.
+
+## 개발과 패키징
+
+```bash
+python -m pytest -q
+python -m ruff check src tests scripts packaging
+python scripts/build.py
+```
+
+각 OS에서 직접 빌드합니다. `dist/`에 앱과 ZIP, 네이티브 코덱 및 GUI를 실행한 `self-test.json`이 생성됩니다. 서드파티 라이선스 텍스트를 번들에 함께 수집합니다. [의존성 안내](docs/dependencies.md)를 참고하세요.
+
+처리는 GUI 밖의 작업 스레드에서 실행하며 일괄 저장은 한 파일씩 처리합니다. 예상값은 550 ms 디바운스와 취소·세대 번호로 오래된 결과가 덮어쓰지 못하게 합니다. PDFium은 전역 잠금으로 직렬화합니다. 출력은 임시 파일을 완성한 뒤 고유하게 예약한 경로에 교체합니다.
