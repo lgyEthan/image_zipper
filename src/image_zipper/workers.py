@@ -60,6 +60,7 @@ class ProcessWorker(QThread):
             process.start()
             started = True
             send.close()
+            received_done = False
             while True:
                 if self.cancel.is_set():
                     cancelled.set()
@@ -70,7 +71,11 @@ class ProcessWorker(QThread):
                         break
                 if receive.poll(0.05):
                     try:
-                        self.message(receive.recv())
+                        message = receive.recv()
+                        if message[0] == "done":
+                            received_done = True
+                            break
+                        self.message(message)
                     except EOFError:
                         break
                 elif not process.is_alive():
@@ -78,6 +83,8 @@ class ProcessWorker(QThread):
             process.join()
             if process.exitcode and not self.cancel.is_set():
                 self.error(f"처리 프로세스가 종료되었습니다 (코드 {process.exitcode}).")
+            elif not received_done and not self.cancel.is_set():
+                self.error("작업 완료 신호를 받기 전에 처리 프로세스가 종료되었습니다.")
         except Exception as exc:
             self.error(str(exc))
         finally:

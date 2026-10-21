@@ -70,4 +70,7 @@ def run_job(connection, kind, assets, settings, cancel, folder=None, merge_name=
     except Exception as exc:
         connection.send(("error", str(exc)))
     finally:
+        # Windows Pipe.poll() can raise ERROR_BROKEN_PIPE once the sender
+        # closes. End the protocol explicitly before closing its handle.
+        connection.send(("done",))
         connection.close()
