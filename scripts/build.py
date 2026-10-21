@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib.metadata
 import json
 import os
 import platform
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -46,6 +48,28 @@ def collect_licenses(destination: Path) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--codesign-identity",
+        help="macOS Developer ID Application certificate's full name or SHA-1 fingerprint",
+    )
+    args = parser.parse_args()
+    identity = None
+    if args.codesign_identity:
+        if sys.platform != "darwin":
+            parser.error("Developer ID signing is only available on macOS")
+        identities = subprocess.check_output(
+            ["security", "find-identity", "-v", "-p", "codesigning"], text=True
+        )
+        matches = [
+            fingerprint
+            for fingerprint, name in re.findall(r'([0-9A-Fa-f]{40}) "([^"]+)"', identities)
+            if name.startswith("Developer ID Application: ")
+            and args.codesign_identity in {fingerprint, name}
+        ]
+        if len(matches) != 1:
+            parser.error("Select one installed, valid Developer ID Application signing identity")
+        identity = matches[0]
     os.chdir(ROOT)
     from image_zipper import __version__
 
@@ -57,6 +81,9 @@ def main() -> None:
     licenses = ROOT / "build" / "third-party-licenses"
     collect_licenses(licenses)
     env = dict(os.environ)
+    env.pop("IMAGE_ZIPPER_CODESIGN_IDENTITY", None)
+    if identity:
+        env["IMAGE_ZIPPER_CODESIGN_IDENTITY"] = identity
     env["PYINSTALLER_CONFIG_DIR"] = str(ROOT / "build" / "pyinstaller-cache")
     command = [
         sys.executable,
@@ -100,6 +127,20 @@ def main() -> None:
             ["codesign", "--verify", "--deep", "--strict", str(binary.parent.parent.parent)],
             check=True,
         )
+        if identity:
+            signature = subprocess.run(
+                ["codesign", "--display", "--verbose=4", str(binary.parent.parent.parent)],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stderr
+            if (
+                "Authority=Developer ID Application:" not in signature
+                or "(runtime)" not in signature
+            ):
+                raise RuntimeError(
+                    "The bundle requires a Developer ID signature and hardened runtime"
+                )
     elif sys.platform == "win32":
         from PyInstaller.utils.win32.versioninfo import read_version_info_from_executable
 
@@ -131,6 +172,9 @@ def main() -> None:
         platform.machine(), platform.machine()
     )
     name = f"ImageZipper-v{version}-{system}-{machine}"
+    if identity:
+        # A valid signature alone is not Apple notarization.
+        name += "-signed"
     if sys.platform == "darwin":
         subprocess.run(
             [

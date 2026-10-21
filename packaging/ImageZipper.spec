@@ -1,5 +1,6 @@
 """Shared desktop bundle, including native OS version metadata."""
 
+import os
 import sys
 import tomllib
 from pathlib import Path
@@ -75,6 +76,9 @@ exe = EXE(
     console=False,
     icon=icon,
     version=windows_version,
+    codesign_identity=(
+        os.environ.get("IMAGE_ZIPPER_CODESIGN_IDENTITY") if sys.platform == "darwin" else None
+    ),
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="ImageZipper")
 if sys.platform == "darwin":

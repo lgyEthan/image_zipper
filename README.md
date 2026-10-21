@@ -30,6 +30,8 @@ Windows와 Mac에서 실행하는 **오프라인 이미지·PDF 압축 프로그
 
 폴더 안의 라이브러리까지 함께 있어야 합니다. 이 개발 빌드는 배포용 서명·Apple 공증을 하지 않았습니다. macOS는 로컬 ad-hoc 서명으로 빌드합니다. 각 플랫폼에서 네이티브 코덱과 GUI를 실행하는 패키지 자체 테스트를 수행합니다.
 
+Apple Developer 계정으로 서명·공증한 배포본을 만드는 절차는 [Mac 배포 안내](docs/macos-distribution.md)에 있습니다.
+
 릴리스에는 ZIP의 SHA-256 체크섬과 플랫폼별 실행 검증 보고서도 함께 제공합니다. 업데이트할 때는 기존 앱을 완전히 종료한 뒤 새 ZIP을 별도 폴더에 풀어 실행하세요. 창 제목과 OS 파일 정보에 버전이 표시됩니다. 개발 중인 빌드는 [GitHub Actions](https://github.com/lgyEthan/image_zipper/actions/workflows/build.yml)에서 받을 수 있습니다.
 
 ### 소스에서 실행
