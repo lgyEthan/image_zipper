@@ -9,13 +9,14 @@ from pathlib import Path
 
 from PIL import Image
 
+from . import __version__
 from .imaging import compress_image, probe
 from .models import Settings
 from .pdf import merge_pdf, render_preview
 
 
 def run(report_path: Path) -> int:
-    results = {}
+    results = {"version": __version__}
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(stage: str, status: str = "ok"):

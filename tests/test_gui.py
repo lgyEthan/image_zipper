@@ -177,6 +177,65 @@ def test_cancelled_preview_restarts_for_same_selected_file(png, app):
         dispose(window, app)
 
 
+def crash_export(connection, kind, assets, settings, cancel, **options):
+    connection.send(("progress", 0, len(assets), assets[0].path.name))
+    os._exit(73)
+
+
+def crash_after_completion(connection, kind, assets, settings, cancel, **options):
+    connection.send(("completed", [], [], "", False))
+    connection.send(("done",))
+    os._exit(73)
+
+
+@pytest.mark.parametrize("job", [crash_export, crash_after_completion])
+def test_crashed_export_reports_failure_and_restores_controls(png, tmp_path, app, monkeypatch, job):
+    from image_zipper import workers
+
+    monkeypatch.setattr(workers, "run_job", job)
+    window = MainWindow()
+    try:
+        window._asset_loaded(probe(png))
+        window.destination.setText(str(tmp_path / "exports"))
+        window._export()
+        spin(app, lambda: window.exporter is None)
+        assert "저장 실패" in window.status.text()
+        assert "0개 저장" in window.status.text()
+        assert "1개 오류" in window.status.text()
+        assert "처리 중" not in window.status.text()
+        assert window.export_button.isEnabled()
+        assert not window.cancel_button.isEnabled()
+        assert "오류:" in window.log.toPlainText()
+    finally:
+        dispose(window, app)
+
+
+def test_export_cancelled_before_start_emits_completion(png, tmp_path, app):
+    from image_zipper.models import Settings
+    from image_zipper.workers import Exporter
+
+    worker = Exporter([probe(png)], Settings(), tmp_path / "exports", None)
+    completed = []
+    worker.completed.connect(lambda *values: completed.append(values))
+    worker.cancel.set()
+    worker.start()
+    spin(app, lambda: not worker.isRunning())
+    assert completed == [([], [], "", True)]
+    assert not (tmp_path / "exports").exists()
+
+
+def test_estimated_size_can_exceed_two_gibibytes(app):
+    from image_zipper.models import Encoded, Settings
+    from image_zipper.workers import Estimator
+
+    worker = Estimator(1, [], Settings(), False)
+    received = []
+    worker.ready.connect(lambda *values: received.append(values))
+    result = Encoded(b"", ".pdf")
+    worker.message(("estimate", result, 3 * 1024**3, b""))
+    assert received == [(1, result, 3 * 1024**3, b"")]
+
+
 def test_selection_contrast_on_dark_host_palette(app):
     dark = QPalette()
     dark.setColor(QPalette.ColorRole.Base, QColor("#111111"))

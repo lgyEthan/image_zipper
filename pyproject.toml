@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "image-zipper"
-version = "0.1.1"
+version = "0.1.2"
 description = "Offline image and PDF compression with a measurable resolution budget"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -41,8 +41,12 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-include = ["*.spec"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"*.spec" = ["F821"]  # PyInstaller supplies Analysis, PYZ, EXE, COLLECT, BUNDLE, and SPECPATH.
 

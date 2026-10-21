@@ -20,15 +20,17 @@ Windows와 Mac에서 실행하는 **오프라인 이미지·PDF 압축 프로그
 
 ### 데스크톱 실행 파일
 
-[GitHub Actions](https://github.com/lgyEthan/image_zipper/actions/workflows/build.yml)의 성공한 실행에서 OS에 맞는 artifact를 받습니다. 안의 ZIP을 다시 풀고 실행하세요.
+[최신 버전 다운로드](https://github.com/lgyEthan/image_zipper/releases/latest)에서 OS에 맞는 ZIP을 받아 압축을 풀고 실행하세요. 설치할 Python은 필요 없습니다. 변경 사항은 [변경 기록](CHANGELOG.md)에 정리합니다.
 
-| 플랫폼 | 파일 | 기준 |
+| 플랫폼 | 다운로드 ZIP / 실행 파일 | 기준 |
 |---|---|---|
-| Windows x64 | `ImageZipper/ImageZipper.exe` | Windows 10/11 x64, CI는 Windows Server 2025 |
-| Mac Apple silicon | `ImageZipper.app` | macOS 15 이상, arm64 |
-| Mac Intel | `ImageZipper.app` | macOS 15 이상, x86_64 |
+| Windows x64 | `…Windows-x64.zip` → `ImageZipper/ImageZipper.exe` | Windows 10/11 x64, CI는 Windows Server 2025 |
+| Mac Apple silicon | `…macOS-arm64.zip` → `ImageZipper.app` | macOS 15 이상, arm64 |
+| Mac Intel | `…macOS-Intel.zip` → `ImageZipper.app` | macOS 15 이상, x86_64 |
 
 폴더 안의 라이브러리까지 함께 있어야 합니다. 이 개발 빌드는 배포용 서명·Apple 공증을 하지 않았습니다. macOS는 로컬 ad-hoc 서명으로 빌드합니다. 각 플랫폼에서 네이티브 코덱과 GUI를 실행하는 패키지 자체 테스트를 수행합니다.
+
+릴리스에는 ZIP의 SHA-256 체크섬과 플랫폼별 실행 검증 보고서도 함께 제공합니다. 업데이트할 때는 기존 앱을 완전히 종료한 뒤 새 ZIP을 별도 폴더에 풀어 실행하세요. 창 제목과 OS 파일 정보에 버전이 표시됩니다. 개발 중인 빌드는 [GitHub Actions](https://github.com/lgyEthan/image_zipper/actions/workflows/build.yml)에서 받을 수 있습니다.
 
 ### 소스에서 실행
 
@@ -144,7 +146,7 @@ python -m ruff check src tests scripts packaging
 python scripts/build.py
 ```
 
-각 OS에서 직접 빌드합니다. `dist/`에 앱과 ZIP, 네이티브 코덱 및 GUI를 실행한 `self-test.json`이 생성됩니다. 서드파티 라이선스 텍스트를 번들에 함께 수집합니다. [의존성 안내](docs/dependencies.md)를 참고하세요.
+각 OS에서 직접 빌드합니다. `dist/`에 앱과 버전·플랫폼을 명시한 ZIP, SHA-256 체크섬, 네이티브 코덱 및 GUI를 실행한 `self-test.json`이 생성됩니다. OS의 버전 정보와 앱 버전의 일치 여부를 검사하고, 완성된 실행 파일을 세 번 실행해 미리보기·시험 압축·저장을 확인합니다. 서드파티 라이선스 텍스트를 번들에 함께 수집합니다. [의존성 안내](docs/dependencies.md)를 참고하세요.
 
 파일 정보는 작업 스레드에서 순차적으로 읽어 목록에 즉시 추가합니다. PNG는 IDAT를 디코딩하지 않고 EXIF를 읽고, 폴더는 디렉터리마다 점진적으로 탐색합니다. 썸네일은 선택 후 120 ms 디바운스, JPEG shrink-on-load, 최근 12개 캐시를 사용합니다. 미리보기·시험 압축·저장은 별도 프로세스에서 실행해 네이티브 코덱이 GUI를 막지 않게 합니다. 시험 압축은 버튼을 누른 경우에만 실행하며, 설정 변경 시 취소하고 오래된 결과는 버립니다. 출력은 임시 파일을 완성한 뒤 고유하게 예약한 경로에 교체합니다.
 

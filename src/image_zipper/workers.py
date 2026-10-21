@@ -44,19 +44,20 @@ class ProcessWorker(QThread):
         self.cancel = Event()
 
     def run(self):
-        context = multiprocessing.get_context("spawn")
-        receive, send = context.Pipe(duplex=False)
-        cancelled = context.Event()
-        process = context.Process(
-            target=run_job,
-            args=(send, self.kind, self.assets, self.settings, cancelled),
-            kwargs=self.options,
-            daemon=True,
-        )
+        receive = send = process = None
         started = False
         try:
             if self.cancel.is_set():
                 return
+            context = multiprocessing.get_context("spawn")
+            receive, send = context.Pipe(duplex=False)
+            cancelled = context.Event()
+            process = context.Process(
+                target=run_job,
+                args=(send, self.kind, self.assets, self.settings, cancelled),
+                kwargs=self.options,
+                daemon=True,
+            )
             process.start()
             started = True
             send.close()
@@ -88,12 +89,19 @@ class ProcessWorker(QThread):
         except Exception as exc:
             self.error(str(exc))
         finally:
-            send.close()
-            receive.close()
-            if started and process.is_alive():
-                process.terminate()
-                process.join()
-            process.close()
+            if send is not None:
+                send.close()
+            if receive is not None:
+                receive.close()
+            if process is not None:
+                if started and process.is_alive():
+                    process.terminate()
+                    process.join()
+                process.close()
+            self.finish_job()
+
+    def finish_job(self):
+        pass
 
 
 class Previewer(ProcessWorker):
@@ -114,7 +122,8 @@ class Previewer(ProcessWorker):
 
 
 class Estimator(ProcessWorker):
-    ready = Signal(int, object, int, bytes)
+    # Python integers preserve sizes above Qt's signed 32-bit int limit.
+    ready = Signal(int, object, object, bytes)
     failed = Signal(int, str)
 
     def __init__(self, revision: int, assets: list, settings: Settings, merge: bool, parent=None):
@@ -139,13 +148,33 @@ class Exporter(ProcessWorker):
 
     def __init__(self, assets, settings, folder, merge_name, parent=None):
         super().__init__("export", assets, settings, parent, folder=folder, merge_name=merge_name)
+        self.results, self.errors, self.report = [], [], ""
+        self.received_completion = False
+        self.was_cancelled = False
 
     def message(self, message):
         name, *values = message
         if name == "error":
             self.error(*values)
-        else:
-            getattr(self, name).emit(*values)
+        elif name == "saved":
+            self.results.append(values[0])
+            self.saved.emit(*values)
+        elif name == "progress":
+            self.progress.emit(*values)
+        elif name == "completed":
+            self.results, errors, self.report, self.was_cancelled = values
+            for error in errors:
+                if error not in self.errors:
+                    self.error(error)
+            # A completion message is provisional until the process exits.
+            self.received_completion = True
 
     def error(self, message):
+        self.errors.append(message)
         self.failed.emit(message)
+
+    def finish_job(self):
+        cancelled = self.was_cancelled or (not self.received_completion and self.cancel.is_set())
+        if not self.received_completion and not self.errors and not cancelled:
+            self.error("저장 결과를 받기 전에 처리 프로세스가 종료되었습니다.")
+        self.completed.emit(self.results, self.errors, self.report, cancelled)

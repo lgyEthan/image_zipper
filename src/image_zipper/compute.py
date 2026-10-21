@@ -64,6 +64,7 @@ def run_job(connection, kind, assets, settings, cancel, folder=None, merge_name=
                     )
                 except Exception as exc:
                     errors.append(f"결과 보고서를 저장할 수 없습니다: {exc}")
+                    connection.send(("error", errors[-1]))
             connection.send(("completed", results, errors, report, cancelled))
     except Cancelled:
         pass

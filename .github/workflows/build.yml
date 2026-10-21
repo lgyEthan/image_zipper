@@ -58,6 +58,7 @@ jobs:
           name: ImageZipper-${{ matrix.name }}
           path: |
             dist/*.zip
+            dist/*.sha256
             dist/self-test.json
           if-no-files-found: error
           retention-days: 30

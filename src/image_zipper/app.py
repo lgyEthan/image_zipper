@@ -931,8 +931,12 @@ class MainWindow(QMainWindow):
 
     def _export_completed(self, results, errors, report, cancelled):
         self.progress.setRange(0, 100)
-        self.progress.setValue(0 if cancelled else 100)
-        status = "취소됨" if cancelled else "완료"
+        self.progress.setValue(0 if cancelled or (errors and not results) else 100)
+        status = "완료"
+        if errors:
+            status = "일부 실패" if results else "저장 실패"
+        if cancelled:
+            status = "취소됨"
         self.status.setText(f"{status} · {len(results)}개 저장 · {len(errors)}개 오류")
         if report:
             self.log.appendPlainText(f"결과 보고서: {report}")
