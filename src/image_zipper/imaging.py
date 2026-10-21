@@ -349,6 +349,11 @@ def compress_image(
         and settings.print_width_mm is None
     ):
         inches = asset.inches(settings)
+        notes = []
+        if asset.dpi_x is None:
+            notes.append(
+                f"원본 DPI 정보 없음: {settings.reference_dpi:g} DPI를 인쇄 크기의 기준으로 가정했습니다."
+            )
         return Encoded(
             asset.path.read_bytes(),
             EXTENSIONS[fmt],
@@ -356,6 +361,7 @@ def compress_image(
             asset.height,
             asset.width / inches[0],
             asset.height / inches[1],
+            warnings=notes,
             details=f"{fmt.upper()} · 이미 용량 상한 이내여서 원본 데이터 유지",
         )
     im, notes = load_image(asset, frame)

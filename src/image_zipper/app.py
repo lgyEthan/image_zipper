@@ -665,9 +665,14 @@ class MainWindow(QMainWindow):
 
     def _preview_finished(self):
         previous = self.previewer.assets[0]
+        cancelled = self.previewer.cancel.is_set()
         self.previewer.deleteLater()
         self.previewer = None
-        if self.selected_asset() != previous and not self.closing:
+        if (
+            self.selected_asset() is not None
+            and (self.selected_asset() != previous or cancelled)
+            and not self.closing
+        ):
             self.debounce.start()
 
     def _start_estimate(self):
@@ -936,6 +941,8 @@ class MainWindow(QMainWindow):
         self.exporter.deleteLater()
         self.exporter = None
         self._busy(False)
+        if self.before.source.isNull() and not self.closing:
+            self.debounce.start()
 
     def _cancel_export(self):
         if self.exporter:

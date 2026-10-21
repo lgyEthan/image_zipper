@@ -48,6 +48,14 @@ def test_gray_jpeg_stays_one_channel(tmp_path):
         assert im.mode == "L"
 
 
+def test_preserving_small_file_still_discloses_assumed_dpi(tmp_path):
+    path = tmp_path / "no-resolution.png"
+    Image.new("RGB", (30, 20)).save(path)
+    result = compress_image(probe(path), Settings(mode="size", reference_dpi=150))
+    assert result.data == path.read_bytes()
+    assert any("150 DPI" in note and "가정" in note for note in result.warnings)
+
+
 def test_size_mode_automatically_goes_below_publication_dpi(png):
     results = [
         compress_image(

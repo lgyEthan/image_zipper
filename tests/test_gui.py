@@ -165,6 +165,18 @@ def test_native_compression_keeps_gui_event_loop_responsive(png, app):
         dispose(window, app)
 
 
+def test_cancelled_preview_restarts_for_same_selected_file(png, app):
+    window = MainWindow()
+    try:
+        window._asset_loaded(probe(png))
+        window._start_preview()
+        window.previewer.cancel.set()
+        spin(app, lambda: not window.before.source.isNull())
+        assert window.preview_asset == window.assets[0]
+    finally:
+        dispose(window, app)
+
+
 def test_selection_contrast_on_dark_host_palette(app):
     dark = QPalette()
     dark.setColor(QPalette.ColorRole.Base, QColor("#111111"))
