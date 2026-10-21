@@ -42,7 +42,8 @@ def test_gui_estimate_latest_settings_and_export(png, tmp_path, app):
         for value in (250, 200, 180, 150):
             window.dpi.setValue(value)
         window._start_estimate()
-        spin(app, lambda: "시험 압축:" in window.estimate_detail.text())
+        spin(app, lambda: window.estimator is None)
+        assert "시험 압축:" in window.estimate_detail.text(), window.estimate_detail.text()
         assert "150 DPI" in window.metric_label.text()
         window.destination.setText(str(tmp_path / "exports"))
         window._export()
@@ -111,7 +112,8 @@ def test_loading_and_settings_never_automatically_trial_encode(png, tmp_path, ap
         window.mode.setCurrentIndex(window.mode.findData("size"))
         window.max_mib.setValue(0.02)
         window.preset.setCurrentIndex(2)
-        spin(app, lambda: not window.before.source.isNull())
+        spin(app, lambda: window.previewer is None and not window.debounce.isActive())
+        assert not window.before.source.isNull(), window.before.toolTip() or window.before.text()
         assert window.estimator is None
         assert "약" in window.metric_label.text()
         assert "빠른 추정" in window.estimate_detail.text()
