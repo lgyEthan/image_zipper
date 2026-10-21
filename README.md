@@ -34,6 +34,8 @@ Windows와 Mac에서 실행하는 **오프라인 이미지·PDF 압축 프로그
 
 Python **3.12 이상**을 사용합니다. 의존성 버전은 `pyproject.toml`에 고정되어 있습니다.
 
+Intel Mac에서 소스로 설치할 때는 pikepdf의 네이티브 빌드를 위해 먼저 `brew install qpdf`를 실행합니다. 완성된 앱에는 필요한 라이브러리를 포함하므로 실행 사용자에게 Homebrew를 요구하지 않습니다.
+
 ```bash
 python -m venv .venv
 ```
