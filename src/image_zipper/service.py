@@ -54,8 +54,8 @@ def atomic_output(folder: Path, stem: str, extension: str, data: bytes) -> Path:
 def require_target(result: Encoded) -> None:
     if not result.target_met:
         raise CompressionError(
-            f"목표 용량 미달: 최소 설정에서 {human_bytes(result.size_bytes)}. "
-            "용량 상한을 늘리거나 최소 DPI·품질을 낮추세요. 파일은 저장하지 않았습니다."
+            f"목표 용량 초과: 최소 픽셀까지 축소한 결과가 {human_bytes(result.size_bytes)}입니다. "
+            "파일 구조·색상 프로파일 또는 PDF 보존 요소가 상한보다 큽니다. 용량 상한을 늘려주세요. 파일은 저장하지 않았습니다."
         )
 
 

@@ -7,10 +7,11 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, QTimer  # noqa: E402
+from PySide6.QtGui import QColor, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from image_zipper.app import MainWindow  # noqa: E402
+from image_zipper.app import MainWindow, configure_theme  # noqa: E402
 from image_zipper.imaging import probe  # noqa: E402
 
 
@@ -26,6 +27,7 @@ def spin(app, condition, timeout=30):
 @pytest.fixture(scope="module")
 def app():
     application = QApplication.instance() or QApplication([])
+    configure_theme(application)
     yield application
     application.closeAllWindows()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -39,6 +41,7 @@ def test_gui_estimate_latest_settings_and_export(png, tmp_path, app):
         window.format.setCurrentIndex(window.format.findData("jpeg"))
         for value in (250, 200, 180, 150):
             window.dpi.setValue(value)
+        window._start_estimate()
         spin(app, lambda: "시험 압축:" in window.estimate_detail.text())
         assert "150 DPI" in window.metric_label.text()
         window.destination.setText(str(tmp_path / "exports"))
@@ -49,7 +52,10 @@ def test_gui_estimate_latest_settings_and_export(png, tmp_path, app):
     finally:
         if window.estimator:
             window.estimator.cancel.set()
-        spin(app, lambda: window.estimator is None)
+        if window.previewer:
+            window.previewer.cancel.set()
+        window.debounce.stop()
+        spin(app, lambda: window.estimator is None and window.previewer is None)
         window.close()
         window.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -61,7 +67,7 @@ def test_gui_clearing_selection_ignores_stale_estimate(png, app):
         window._asset_loaded(probe(png))
         window._start_estimate()
         window._clear()
-        spin(app, lambda: window.estimator is None)
+        spin(app, lambda: window.estimator is None and window.previewer is None)
         assert window.assets == []
         assert window.metric_label.text() == "—"
         assert not window.export_button.isEnabled()
@@ -69,3 +75,121 @@ def test_gui_clearing_selection_ignores_stale_estimate(png, app):
         window.close()
         window.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def dispose(window, app):
+    window.close()
+    spin(
+        app,
+        lambda: (
+            all(w is None for w in (window.estimator, window.previewer, window.exporter))
+            and not window.loaders
+        ),
+    )
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_loading_and_settings_never_automatically_trial_encode(png, tmp_path, app, monkeypatch):
+    from image_zipper import app as app_module
+
+    def no_estimate(*args, **kwargs):
+        raise AssertionError("Adding/selecting files must not perform full trial compression")
+
+    monkeypatch.setattr(app_module, "Estimator", no_estimate)
+    paths = []
+    for index in range(100):
+        path = tmp_path / f"batch-{index:03d}.png"
+        os.link(png, path)
+        paths.append(path)
+    window = MainWindow()
+    try:
+        window.add_paths(paths)
+        spin(app, lambda: not window.loaders)
+        assert len(window.assets) == 100
+        assert window.total_bytes == 100 * png.stat().st_size
+        window.mode.setCurrentIndex(window.mode.findData("size"))
+        window.max_mib.setValue(0.02)
+        window.preset.setCurrentIndex(2)
+        spin(app, lambda: not window.before.source.isNull())
+        assert window.estimator is None
+        assert "약" in window.metric_label.text()
+        assert "빠른 추정" in window.estimate_detail.text()
+    finally:
+        dispose(window, app)
+
+
+def test_size_mode_hides_dpi_and_exports_under_cap_with_publication_preset(png, tmp_path, app):
+    window = MainWindow()
+    try:
+        window._asset_loaded(probe(png))
+        window.mode.setCurrentIndex(window.mode.findData("size"))
+        window.format.setCurrentIndex(window.format.findData("jpeg"))
+        window.max_mib.setValue(0.005)
+        assert window.dpi.isHidden()
+        assert not window.max_mib.isHidden()
+        assert window.settings().target_dpi == 300
+        window.destination.setText(str(tmp_path / "size-output"))
+        window._export()
+        spin(app, lambda: window.exporter is None)
+        outputs = list((tmp_path / "size-output").glob("*.jpg"))
+        assert len(outputs) == 1
+        assert outputs[0].stat().st_size <= round(0.005 * 1024 * 1024)
+        assert probe(outputs[0]).dpi_x < 300
+        assert "0개 오류" in window.status.text()
+        window.mode.setCurrentIndex(window.mode.findData("dpi"))
+        assert not window.dpi.isHidden()
+        assert window.max_mib.isHidden()
+    finally:
+        dispose(window, app)
+
+
+def test_native_compression_keeps_gui_event_loop_responsive(png, app):
+    window = MainWindow()
+    ticks = []
+    timer = QTimer()
+    timer.setInterval(10)
+    timer.timeout.connect(lambda: ticks.append(time.monotonic()))
+    try:
+        window._asset_loaded(probe(png))
+        window.format.setCurrentIndex(window.format.findData("avif"))
+        timer.start()
+        window._start_estimate()
+        spin(app, lambda: window.estimator is None)
+        assert len(ticks) >= 3
+        assert max(b - a for a, b in zip(ticks, ticks[1:], strict=False)) < 1.0
+    finally:
+        timer.stop()
+        dispose(window, app)
+
+
+def test_selection_contrast_on_dark_host_palette(app):
+    dark = QPalette()
+    dark.setColor(QPalette.ColorRole.Base, QColor("#111111"))
+    dark.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
+    dark.setColor(QPalette.ColorRole.HighlightedText, QColor("#111111"))
+    app.setPalette(dark)
+    configure_theme(app)
+
+    def luminance(color):
+        channels = [color.redF(), color.greenF(), color.blueF()]
+        values = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in channels]
+        return sum(v * w for v, w in zip(values, (0.2126, 0.7152, 0.0722), strict=True))
+
+    window = MainWindow()
+    try:
+        for widget in (
+            window.table,
+            window.mode.view(),
+            window.destination,
+            window.dpi.lineEdit(),
+            window.log,
+        ):
+            widget.ensurePolished()
+            for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+                palette = widget.palette()
+                fg = luminance(palette.color(group, QPalette.ColorRole.HighlightedText))
+                bg = luminance(palette.color(group, QPalette.ColorRole.Highlight))
+                assert (max(fg, bg) + 0.05) / (min(fg, bg) + 0.05) >= 4.5
+    finally:
+        dispose(window, app)

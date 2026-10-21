@@ -108,11 +108,19 @@ def main() -> None:
     )
     report = ROOT / "dist" / "self-test.json"
     check_env = dict(env, QT_QPA_PLATFORM="offscreen")
-    subprocess.run(
-        [str(binary), "--self-test", str(report)], env=check_env, check=True, timeout=180
-    )
-    if json.loads(report.read_text())["status"] != "passed":
-        raise RuntimeError("Bundled application failed its smoke check")
+    for _ in range(3):
+        completed = subprocess.run(
+            [str(binary), "--self-test", str(report)], env=check_env, check=False, timeout=180
+        )
+        if completed.returncode:
+            if report.exists():
+                print(report.read_text(), flush=True)
+            completed.check_returncode()
+        if json.loads(report.read_text())["status"] != "passed":
+            raise RuntimeError("Bundled application failed its smoke check")
+    results = json.loads(report.read_text())
+    results["verified_launches"] = 3
+    report.write_text(json.dumps(results, indent=2), encoding="utf-8")
     name = f"ImageZipper-{platform.system()}-{platform.machine()}"
     if sys.platform == "darwin":
         subprocess.run(

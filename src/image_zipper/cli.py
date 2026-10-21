@@ -16,7 +16,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=["dpi", "size", "original"], default="dpi")
     parser.add_argument("--dpi", type=float, default=300)
     parser.add_argument("--max-mib", type=float, default=2)
-    parser.add_argument("--min-dpi", type=float, default=72)
     parser.add_argument("--quality", type=int, default=92)
     parser.add_argument("--min-quality", type=int, default=82)
     parser.add_argument(
@@ -35,7 +34,6 @@ def main(argv: list[str] | None = None) -> int:
         mode=args.mode,
         target_dpi=args.dpi,
         max_bytes=int(args.max_mib * 1024 * 1024),
-        min_dpi=args.min_dpi,
         quality=args.quality,
         min_quality=args.min_quality,
         output_format=args.format,

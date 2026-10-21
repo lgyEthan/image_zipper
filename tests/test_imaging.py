@@ -48,7 +48,7 @@ def test_actual_dpi_resamples_using_physical_size(png):
 def test_target_size_is_measured_and_no_generation_cascade(png):
     result = compress_image(
         probe(png),
-        Settings(mode="size", max_bytes=14000, output_format="jpeg", min_dpi=30, min_quality=70),
+        Settings(mode="size", max_bytes=14000, output_format="jpeg", min_quality=70),
     )
     assert result.target_met
     assert len(result.data) <= 14000
@@ -61,7 +61,9 @@ def test_target_size_is_measured_and_no_generation_cascade(png):
 
 def test_impossible_target_does_not_write(png, tmp_path):
     asset = probe(png)
-    settings = Settings(mode="size", max_bytes=1024, min_dpi=300, output_format="png")
+    # JPEG headers plus this image's real ICC profile exceed this tiny budget,
+    # even with a 1x1 image. Failure must never be due to a DPI floor.
+    settings = Settings(mode="size", max_bytes=1024, output_format="jpeg", jpeg_engine="pillow")
     assert not compress_image(asset, settings).target_met
     with pytest.raises(CompressionError, match="목표 용량"):
         save_asset(asset, settings, tmp_path / "output")

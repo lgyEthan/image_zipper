@@ -24,7 +24,6 @@ class Settings:
     mode: str = "dpi"  # dpi, size, original
     target_dpi: float = 300
     max_bytes: int = 2 * 1024 * 1024
-    min_dpi: float = 72
     quality: int = 92
     min_quality: int = 82
     output_format: str = "auto"
@@ -40,12 +39,17 @@ class Settings:
             raise CompressionError("지원하지 않는 출력 형식입니다.")
         if self.content not in {"photo", "artwork"}:
             raise CompressionError("올바른 이미지 유형을 선택하세요.")
-        for value in (self.target_dpi, self.min_dpi, self.reference_dpi):
+        dpi_values = (
+            (self.reference_dpi, self.target_dpi) if self.mode == "dpi" else (self.reference_dpi,)
+        )
+        for value in dpi_values:
             if not math.isfinite(value) or not 1 <= value <= 9600:
                 raise CompressionError("DPI는 1–9600 사이의 값이어야 합니다.")
-        if not 1 <= self.min_quality <= self.quality <= 100:
+        if not (1 <= self.min_quality <= 100 and 1 <= self.quality <= 100):
+            raise CompressionError("인코더 품질은 1–100 사이의 값이어야 합니다.")
+        if self.mode == "size" and self.min_quality > self.quality:
             raise CompressionError("품질은 1–100이고, 최소 품질보다 높아야 합니다.")
-        if self.max_bytes < 1024:
+        if self.mode == "size" and self.max_bytes < 1024:
             raise CompressionError("목표 용량은 1 KiB 이상이어야 합니다.")
         if self.print_width_mm is not None and (
             not math.isfinite(self.print_width_mm) or self.print_width_mm <= 0

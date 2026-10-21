@@ -317,20 +317,23 @@ def compress_pdf(source: Path | bytes, settings: Settings, cancel: Event | None 
     original = _pdf_candidate(data, settings, None, settings.quality, cancel, lossless_only=True)
     if original.size_bytes <= settings.max_bytes:
         return original
-    max_dpi = max(settings.min_dpi, min(original.dpi_y or settings.target_dpi, 9600))
+    max_dpi = min(original.dpi_y or 9600, 9600)
     full = _pdf_candidate(data, settings, max_dpi, settings.min_quality, cancel)
     if full.size_bytes <= settings.max_bytes:
         best, best_dpi = full, max_dpi
     else:
-        minimum = _pdf_candidate(data, settings, settings.min_dpi, settings.min_quality, cancel)
+        # No print preset or target DPI constrains byte-budget mode. At this
+        # bound every eligible image is reduced to its minimum of one pixel.
+        min_dpi = 1e-6
+        minimum = _pdf_candidate(data, settings, min_dpi, settings.min_quality, cancel)
         if minimum.size_bytes > settings.max_bytes:
             minimum.target_met = False
             minimum.warnings.append(
-                "텍스트·벡터·보존 이미지와 최소 품질 때문에 목표 용량에 도달할 수 없습니다. 저장하지 않습니다."
+                "이미지를 최소 픽셀까지 줄여도 텍스트·벡터·보존 이미지·문서 구조가 용량 상한보다 큽니다. 용량 상한을 늘려주세요."
             )
             return minimum
-        best, best_dpi = minimum, settings.min_dpi
-        lo, hi = settings.min_dpi, max_dpi
+        best, best_dpi = minimum, min_dpi
+        lo, hi = min_dpi, max_dpi
         for _ in range(7):
             dpi = (lo + hi) / 2
             trial = _pdf_candidate(data, settings, dpi, settings.min_quality, cancel)
