@@ -19,10 +19,12 @@ def run(*args, **kwargs):
 
 
 def main():
+    from cmake import CMAKE_BIN_DIR
+
     work = ROOT / "build/heif-decoder"
     work.mkdir(parents=True, exist_ok=True)
     prefix = work / "prefix"
-    cmake = Path(sys.executable).parent / ("cmake.exe" if sys.platform == "win32" else "cmake")
+    cmake = Path(CMAKE_BIN_DIR) / ("cmake.exe" if sys.platform == "win32" else "cmake")
     if not cmake.exists():
         raise RuntimeError("Install the codec build tools from requirements-build.txt first")
     common = [
