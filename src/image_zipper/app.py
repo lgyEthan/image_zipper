@@ -21,6 +21,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QFileDialog,
@@ -192,12 +193,16 @@ class MainWindow(QMainWindow):
         self.operation.addItems(["파일 압축", "PDF로 합치기"])
         self.operation.hide()
         self.navigation = []
+        self.navigation_group = QButtonGroup(self)
         for index, text in enumerate(("파일 압축", "PDF로 합치기")):
             button = QPushButton(text)
             button.setObjectName("navigation")
             button.setCheckable(True)
-            button.clicked.connect(
-                lambda checked=False, value=index: self.operation.setCurrentIndex(value)
+            self.navigation_group.addButton(button)
+            button.toggled.connect(
+                lambda checked, value=index: (
+                    self.operation.setCurrentIndex(value) if checked else None
+                )
             )
             self.navigation.append(button)
             controls.addWidget(button)

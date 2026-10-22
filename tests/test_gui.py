@@ -112,6 +112,12 @@ def test_editor_drag_rotate_resize_undo_and_cancel(png, app):
         assert dialog.apply_button.isEnabled()
         assert dialog.windowFlags() & Qt.WindowType.WindowCloseButtonHint
         assert not dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+        # macOS accessibility toggles checkable buttons without a clicked signal.
+        dialog.tools[2].setChecked(True)
+        assert dialog.panels.currentIndex() == 2
+        assert sum(button.isChecked() for button in dialog.tools) == 1
+        dialog.tools[0].setChecked(True)
+        assert dialog.panels.currentIndex() == 0
         box = dialog.canvas.image_rect()
         start = QPoint(round(box.left() + box.width() * 0.2), round(box.top() + box.height() * 0.2))
         end = QPoint(round(box.left() + box.width() * 0.6), round(box.top() + box.height() * 0.6))
@@ -157,6 +163,11 @@ def test_editor_settings_ignore_wheel_and_apply_updates_only_selected_file(png, 
     try:
         window._asset_loaded(probe(png))
         window._asset_loaded(probe(second))
+        window.navigation[1].setChecked(True)
+        assert window.operation.currentIndex() == 1
+        window.navigation[0].setChecked(True)
+        assert window.operation.currentIndex() == 0
+        assert sum(button.isChecked() for button in window.navigation) == 1
         window.table.selectRow(0)
         dialog.show()
         for index, widgets in (

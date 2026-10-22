@@ -8,6 +8,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QFrame,
@@ -179,11 +180,13 @@ class EditorDialog(QDialog):
         tools = QHBoxLayout()
         tools.addStretch()
         self.tools = []
+        self.tool_group = QButtonGroup(self)
         for index, text in enumerate(("모자이크", "크기", "기울기")):
             button = QPushButton(text)
             button.setCheckable(True)
+            self.tool_group.addButton(button)
             button.setMinimumWidth(100)
-            button.clicked.connect(lambda checked=False, i=index: self._tool(i))
+            button.toggled.connect(lambda checked, i=index: self._tool(i) if checked else None)
             self.tools.append(button)
             tools.addWidget(button)
         tools.addStretch()
