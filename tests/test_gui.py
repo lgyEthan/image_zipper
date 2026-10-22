@@ -272,3 +272,50 @@ def test_selection_contrast_on_dark_host_palette(app, dark_mode):
                 assert (max(fg, bg) + 0.05) / (min(fg, bg) + 0.05) >= 4.5
     finally:
         dispose(window, app)
+
+
+@pytest.mark.skipif(__import__("sys").platform != "darwin", reason="Cocoa accessibility adapter")
+def test_file_accessibility_rows_survive_updates_and_removal(app):
+    from PySide6.QtGui import QAccessible, QAccessibleActionInterface
+    from PySide6.QtWidgets import QAbstractItemView, QTableWidgetItem
+
+    from image_zipper.file_table import FileTable
+
+    table = FileTable(2, 2)
+    table.setHorizontalHeaderLabels(["File", "Size"])
+    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    table.setItem(0, 0, QTableWidgetItem("first.png"))
+    table.setItem(1, 0, QTableWidgetItem("second.jpg"))
+    table.setItem(1, 1, QTableWidgetItem("1.98 MB"))
+    table.show()
+    app.processEvents()
+    interface = QAccessible.queryAccessibleInterface(table)
+    assert interface.role() == QAccessible.Role.List
+    assert interface.interface_cast(QAccessible.InterfaceType.TableInterface) is None
+    assert interface.childCount() == 2
+    child = interface.child(1)
+    assert child.role() == QAccessible.Role.ListItem
+    assert child.parent() == interface
+    assert "second.jpg" in child.text(QAccessible.Text.Name)
+    assert "1.98 MB" in child.text(QAccessible.Text.Name)
+    child.actionInterface().doAction(QAccessibleActionInterface.pressAction())
+    assert table.currentRow() == 1
+    assert child.state().selected
+    assert child.rect().width() > 0
+    table.removeRow(0)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert interface.childCount() == 1
+    assert interface.indexOfChild(child) == 0
+    assert interface.child(0) == child
+    table.item(0, 1).setText("2.00 MB")
+    assert "2.00 MB" in child.text(QAccessible.Text.Name)
+    table.setRowCount(0)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert interface.childCount() == 0
+    assert interface.child(0) is None
+    table.insertRow(0)
+    table.setItem(0, 0, QTableWidgetItem("new.pdf"))
+    assert "new.pdf" in interface.child(0).text(QAccessible.Text.Name)
+    table.close()
+    table.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

@@ -28,7 +28,7 @@ Windows와 Mac에서 실행하는 **오프라인 이미지·PDF 압축 프로그
 | Mac Apple silicon | `…macOS-arm64-notarized.zip` → `ImageZipper.app` | macOS 15 이상, arm64 |
 | Mac Intel | `…macOS-Intel-notarized.zip` → `ImageZipper.app` | macOS 15 이상, x86_64 |
 
-폴더 안의 라이브러리까지 함께 있어야 합니다. Mac의 **`-notarized.zip` 배포본은 Developer ID 서명과 Apple 공증을 완료**했고, 공증 티켓을 앱에 포함합니다. ZIP을 다시 푼 앱의 Gatekeeper 허용과 실제 실행을 검사했습니다. 같은 릴리스에 남아 있는 접미사 없는 Mac ZIP은 공증 이전 개발 빌드이므로 위 표의 파일을 받으세요. Windows 배포본에는 Authenticode 서명이 없습니다.
+폴더 안의 라이브러리까지 함께 있어야 합니다. Mac의 **`-notarized.zip` 배포본은 Developer ID 서명과 Apple 공증을 완료**했고, 공증 티켓을 앱에 포함합니다. ZIP을 다시 푼 앱의 Gatekeeper 허용과 실제 실행을 검사했습니다. Windows 배포본에는 Authenticode 서명이 없습니다.
 
 Apple Developer 계정으로 서명·공증한 배포본을 만드는 절차는 [Mac 배포 안내](docs/macos-distribution.md)에 있습니다.
 

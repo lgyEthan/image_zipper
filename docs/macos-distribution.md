@@ -55,7 +55,7 @@ xcrun notarytool store-credentials image-zipper
 
 ```bash
 # 실제 빌드에서 생성된 -signed.zip 경로를 지정합니다.
-xcrun notarytool submit dist/ImageZipper-v0.1.2-macOS-arm64-signed.zip \
+xcrun notarytool submit dist/ImageZipper-v0.1.3-macOS-arm64-signed.zip \
   --keychain-profile image-zipper --wait
 ```
 
@@ -81,10 +81,10 @@ spctl --assess --type execute --verbose=4 dist/ImageZipper.app
 
 ```bash
 ditto -c -k --sequesterRsrc --keepParent dist/ImageZipper.app \
-  dist/ImageZipper-v0.1.2-macOS-arm64-notarized.zip
+  dist/ImageZipper-v0.1.3-macOS-arm64-notarized.zip
 cd dist
-shasum -a 256 ImageZipper-v0.1.2-macOS-arm64-notarized.zip \
-  > ImageZipper-v0.1.2-macOS-arm64-notarized.zip.sha256
+shasum -a 256 ImageZipper-v0.1.3-macOS-arm64-notarized.zip \
+  > ImageZipper-v0.1.3-macOS-arm64-notarized.zip.sha256
 ```
 
 생성한 ZIP을 새 폴더에 풀고 티켓·서명·Gatekeeper 검사를 다시 수행합니다. 압축을 푼 앱의 `Contents/MacOS/ImageZipper --self-test report.json`을 실행해 네이티브 코덱과 GUI도 검사합니다. 검증 보고서와 SHA-256을 ZIP과 함께 배포합니다.

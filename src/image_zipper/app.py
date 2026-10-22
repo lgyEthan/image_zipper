@@ -40,13 +40,13 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStackedWidget,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from . import __version__
+from .file_table import FileTable
 from .imaging import INPUT_EXTENSIONS, quick_estimate
 from .models import Asset, CompressionError, Settings, human_bytes
 from .theme import configure_theme
@@ -337,7 +337,7 @@ class MainWindow(QMainWindow):
             empty_layout.addWidget(item)
         empty_layout.addStretch()
         self.stack.addWidget(empty)
-        self.table = QTableWidget(0, 6)
+        self.table = FileTable(0, 6)
         self.table.setHorizontalHeaderLabels(
             ["파일", "원본 크기", "픽셀 / 페이지", "DPI", "출력 크기", "상태"]
         )
