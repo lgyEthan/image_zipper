@@ -36,6 +36,10 @@ def main():
     ]
     if sys.platform == "darwin":
         common += ["-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0", f"-DCMAKE_INSTALL_NAME_DIR={prefix}/lib"]
+    elif sys.platform == "win32":
+        # Select the installed MSVC toolchain without requiring a Developer
+        # Command Prompt or inheriting an unrelated host's Ninja/NMake setup.
+        common += ["-G", "Visual Studio 17 2022", "-A", "x64"]
     for name in ("libde265", "libheif"):
         source = extract_source(name, work / name / "source")
         options = ["-DENABLE_DECODER=OFF", "-DENABLE_ENCODER=OFF", "-DENABLE_SDL=OFF"]
