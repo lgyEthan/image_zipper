@@ -14,7 +14,7 @@ import pypdfium2
 from pikepdf import Array, Dictionary, Name, Pdf, PdfImage
 from PIL import Image
 
-from .budget import fill_quality_gap, fit_quality, fit_scale
+from .budget import fit_quality, fit_scale
 from .models import Asset, CompressionError, Encoded, Settings, check_cancel
 
 # PDFium permits only one simultaneous caller, including preview workers.
@@ -343,7 +343,9 @@ def _pdf_candidate(
                             resized.close()
             dpi_values.extend((width / entry.width_in, height / entry.height_in))
         check_cancel(cancel)
-        data = _save(pdf, recompress=lossless_only)
+        # Re-deflating every existing stream on each trial buys little and can
+        # dominate image fitting. Newly written raw streams are still compressed.
+        data = _save(pdf, recompress=False)
         if not changed and len(data) > len(source):
             data = source
         if skipped:
@@ -427,14 +429,45 @@ def compress_pdf(source: Path | bytes, settings: Settings, cancel: Event | None 
                 settings.min_quality,
                 settings.max_bytes,
             )
-            best = fill_quality_gap(
-                lambda value, quality: candidate(max_dpi * value, quality),
-                best,
-                scale,
-                settings.max_bytes,
-            )
         best.details += f" · 상한의 {best.size_bytes / settings.max_bytes:.1%} 사용"
         return best
+
+
+def _append_raster_page(pdf: Pdf, im: Image.Image, inches: tuple[float, float]) -> bool:
+    """Embed common pixel modes once, without a PNG encode/decode round trip."""
+    if im.mode not in {"RGB", "RGBA", "L", "LA", "CMYK"}:
+        return False
+    has_alpha = "A" in im.getbands()
+    mode = "RGB" if im.mode == "RGBA" else "L" if im.mode == "LA" else im.mode
+    pixels = im.convert(mode) if has_alpha else im
+    try:
+        channels = len(pixels.getbands())
+        space = {1: Name.DeviceGray, 3: Name.DeviceRGB, 4: Name.DeviceCMYK}[channels]
+        image = pdf.make_stream(zlib.compress(pixels.tobytes(), 1))
+        image.Type, image.Subtype = Name.XObject, Name.Image
+        image.Width, image.Height, image.BitsPerComponent = im.width, im.height, 8
+        image.Filter, image.ColorSpace = Name.FlateDecode, space
+        if profile := im.info.get("icc_profile"):
+            icc = pdf.make_stream(profile)
+            icc.N, icc.Alternate = channels, space
+            image.ColorSpace = Array([Name.ICCBased, icc])
+        if has_alpha:
+            with im.getchannel("A") as alpha:
+                mask = pdf.make_stream(zlib.compress(alpha.tobytes(), 1))
+            mask.Type, mask.Subtype = Name.XObject, Name.Image
+            mask.Width, mask.Height, mask.BitsPerComponent = im.width, im.height, 8
+            mask.Filter, mask.ColorSpace = Name.FlateDecode, Name.DeviceGray
+            image.SMask = mask
+        width, height = inches[0] * 72, inches[1] * 72
+        page = pdf.add_blank_page(page_size=(width, height))
+        page.Resources = Dictionary(XObject=Dictionary(Im0=image))
+        page.Contents = pdf.make_stream(
+            f"q {width:.10g} 0 0 {height:.10g} 0 0 cm /Im0 Do Q".encode()
+        )
+        return True
+    finally:
+        if pixels is not im:
+            pixels.close()
 
 
 def merge_pdf(
@@ -458,11 +491,28 @@ def merge_pdf(
             if asset.is_pdf:
                 with open_pdf(asset.path) as source:
                     _check_signatures(source)
+                    if any(
+                        key in source.Root
+                        for key in (
+                            "/AcroForm",
+                            "/Outlines",
+                            "/Names",
+                            "/Dests",
+                            "/OCProperties",
+                            "/StructTreeRoot",
+                            "/Collection",
+                        )
+                    ):
+                        raise CompressionError(
+                            "책갈피·양식·첨부 자료 등 문서 구조가 있는 PDF는 병합 시 정보가 사라질 수 있습니다. "
+                            "이 문서는 개별 압축을 사용하세요."
+                        )
                     merged.pages.extend(source.pages)
-                notes.append(
-                    "기존 PDF에서는 페이지를 가져옵니다. 문서 책갈피·양식 필드는 병합하지 않습니다."
-                )
                 continue
+            if asset.frames > 1 and asset.format != "TIFF":
+                raise CompressionError(
+                    "움직임이나 보조 이미지를 잃지 않도록 이 다중 프레임 파일의 PDF 병합을 중단했습니다."
+                )
             for frame in range(asset.frames):
                 check_cancel(cancel)
                 current = image_asset(asset.path, frame) if frame else asset
@@ -470,6 +520,8 @@ def merge_pdf(
                 notes.extend(image_notes)
                 try:
                     inches = current.inches(settings)
+                    if _append_raster_page(merged, im, inches):
+                        continue
                     fmt = "tiff" if im.mode == "CMYK" or im.mode in {"F", "I"} else "png"
                     pixels = encode_pixels(im, fmt, 100, (72, 72), settings, optimize_png=False)
                     layout = img2pdf.get_layout_fun(pagesize=(inches[0] * 72, inches[1] * 72))

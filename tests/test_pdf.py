@@ -7,7 +7,7 @@ import pikepdf
 import pypdfium2
 import pytest
 from conftest import make_pdf
-from pikepdf import Dictionary, Name
+from pikepdf import Array, Dictionary, Name
 from PIL import Image
 
 from image_zipper.imaging import probe
@@ -132,3 +132,60 @@ def test_signed_pdf_refused(tmp_path):
         pdf.save(path)
     with pytest.raises(CompressionError, match="서명"):
         compress_pdf(path, Settings())
+
+
+def test_pdf_nonimage_content_and_document_features_survive(pdf_file, tmp_path):
+    path = tmp_path / "annotated.pdf"
+    with pikepdf.Pdf.open(pdf_file) as pdf:
+        pdf.docinfo["/Title"] = "Research figure"
+        pdf.Root.AcroForm = Dictionary(Fields=Array([]))
+        with pdf.open_outline() as outline:
+            outline.root.append(pikepdf.OutlineItem("Chapter", 0))
+        page = pdf.pages[0]
+        page.Rotate = 90
+        page.CropBox = [10, 10, 350, 350]
+        page.Annots = [
+            pdf.make_indirect(
+                Dictionary(
+                    Type=Name.Annot,
+                    Subtype=Name.Text,
+                    Rect=[20, 20, 40, 40],
+                    Contents="Keep this note",
+                )
+            )
+        ]
+        content = page.Contents.read_bytes()
+        pdf.save(path)
+    original = path.read_bytes()
+    result = compress_pdf(path, Settings(target_dpi=120))
+    with pikepdf.Pdf.open(io.BytesIO(result.data)) as output:
+        page = output.pages[0]
+        assert page.Contents.read_bytes() == content
+        assert page.Rotate == 90
+        assert list(page.CropBox) == [10, 10, 350, 350]
+        assert str(page.Annots[0].Contents) == "Keep this note"
+        assert str(output.docinfo["/Title"]) == "Research figure"
+        assert "/AcroForm" in output.Root
+        with output.open_outline() as outline:
+            assert outline.root[0].title == "Chapter"
+    assert path.read_bytes() == original
+    with pytest.raises(CompressionError, match="문서 구조"):
+        merge_pdf([probe(path)], Settings())
+
+
+def test_direct_pdf_embedding_preserves_alpha_icc_and_page_geometry(tmp_path):
+    from PIL import ImageCms
+
+    path = tmp_path / "alpha.png"
+    source = Image.new("RGBA", (100, 200), (30, 90, 180, 80))
+    source.putpixel((0, 0), (90, 30, 10, 0))
+    profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    source.save(path, icc_profile=profile, dpi=(100, 100))
+    result = merge_pdf([probe(path)], Settings(mode="original"))
+    with pikepdf.Pdf.open(io.BytesIO(result.data)) as pdf:
+        page = pdf.pages[0]
+        assert tuple(float(v) for v in page.MediaBox) == pytest.approx((0, 0, 72, 144), abs=0.01)
+        image = page.Resources.XObject.Im0
+        assert image.read_bytes() == source.convert("RGB").tobytes()
+        assert image.SMask.read_bytes() == source.getchannel("A").tobytes()
+        assert image.ColorSpace[1].read_bytes() == profile

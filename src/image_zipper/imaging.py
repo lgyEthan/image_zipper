@@ -12,9 +12,9 @@ from threading import Event, RLock
 import oxipng
 import pillow_heif
 import pyjpegli
-from PIL import Image, ImageCms, ImageFile, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageFile, ImageOps, PngImagePlugin, TiffImagePlugin, UnidentifiedImageError
 
-from .budget import fill_quality_gap, fit_quality, fit_scale
+from .budget import fit_quality, fit_scale
 from .models import Asset, CompressionError, Encoded, Settings, check_cancel
 
 pillow_heif.register_heif_opener(thumbnails=False)
@@ -152,6 +152,19 @@ def load_image(asset: Asset, frame: int = 0) -> tuple[Image.Image, list[str]]:
             source.seek(frame)
             source.load()
             im = ImageOps.exif_transpose(source)
+            if source.format == "PNG":
+                im.info["_png_text"] = dict(source.text)
+            if source.format == "JPEG":
+                im.info["_jpeg_extra"] = [
+                    (name, data) for name, data in source.applist if name in {"APP13", "COM"}
+                ]
+            if source.format == "TIFF":
+                # Descriptive tags must not disappear when recompressing a TIFF.
+                im.info["_tiff_tags"] = {
+                    tag: source.tag_v2[tag]
+                    for tag in (269, 270, 271, 272, 285, 305, 306, 315, 316, 33432, 33723, 700)
+                    if tag in source.tag_v2
+                }
     if im.mode == "P":
         im = im.convert("RGBA" if asset.has_alpha else "RGB")
     if asset.format in {"HEIF", "HEIC", "AVIF"}:
@@ -169,12 +182,18 @@ def load_image(asset: Asset, frame: int = 0) -> tuple[Image.Image, list[str]]:
 def select_format(asset: Asset, settings: Settings) -> str:
     if settings.output_format != "auto":
         return settings.output_format
+    if asset.format == "TIFF":
+        return "tiff"
+    if asset.format == "WEBP":
+        return "webp"
     if settings.content == "artwork" or asset.has_alpha:
         return "png"
     if asset.color_mode.startswith("I") or asset.color_mode in {"F", "CMYK"}:
         return "tiff"
     if asset.format == "PNG":
         return "png"
+    if asset.format == "AVIF":
+        return "avif"
     return "jpeg"
 
 
@@ -196,41 +215,51 @@ def _rgb(im: Image.Image) -> Image.Image:
     if im.mode in {"RGB", "RGBA", "L", "LA", "1"}:
         return im
     if im.mode == "CMYK":
-        icc = im.info.get("icc_profile")
-        if icc:
-            try:
-                srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
-                converted = ImageCms.profileToProfile(
-                    im, ImageCms.ImageCmsProfile(io.BytesIO(icc)), srgb, outputMode="RGB"
-                )
-                converted.info["icc_profile"] = srgb.tobytes()
-                return converted
-            except (ImageCms.PyCMSError, OSError) as exc:
-                raise CompressionError(
-                    "CMYK 색상 프로파일을 변환할 수 없습니다. TIFF 출력을 사용하세요."
-                ) from exc
-        raise CompressionError(
-            "ICC 프로파일 없는 CMYK입니다. 색 보존을 위해 TIFF 출력을 사용하세요."
-        )
+        raise CompressionError("CMYK 색 공간을 그대로 보존하려면 TIFF 출력을 사용하세요.")
     raise CompressionError(
         "이 비트 심도는 선택한 형식으로 보존할 수 없습니다. TIFF 또는 PNG를 선택하세요."
     )
 
 
-def _exif(dpi: tuple[float, float]) -> bytes:
-    # Only physical size is copied; stale orientation, thumbnails and dimensions are removed.
+def _exif(dpi: tuple[float, float], im: Image.Image | None = None) -> bytes:
     exif = Image.Exif()
+    if im is not None:
+        original = im.info.get("exif")
+        if original:
+            exif.load(original)
+        # These fields describe the newly sampled pixels; capture metadata stays.
+        if 274 in exif:
+            exif[274] = 1
+        for tag, value in ((256, im.width), (257, im.height)):
+            if tag in exif:
+                exif[tag] = value
+        if 34665 in exif:
+            details = dict(exif.get_ifd(34665))
+            for tag, value in ((40962, im.width), (40963, im.height)):
+                if tag in details:
+                    details[tag] = value
+            exif[34665] = details
     exif[282], exif[283], exif[296] = dpi[0], dpi[1], 2
     return exif.tobytes()
 
 
-def jpeg_metadata(data: bytes, dpi: tuple[float, float], icc: bytes | None) -> bytes:
+def jpeg_metadata(
+    data: bytes, dpi: tuple[float, float], icc: bytes | None, im: Image.Image | None = None
+) -> bytes:
     """Insert metadata without a second JPEG encode (APP markers do not touch pixels)."""
 
     def marker(number: int, payload: bytes) -> bytes:
+        if len(payload) > 65533:
+            raise CompressionError("메타데이터가 JPEG 한 구간에 저장하기에 너무 큽니다.")
         return b"\xff" + bytes([number]) + struct.pack(">H", len(payload) + 2) + payload
 
-    metadata = marker(0xE1, _exif(dpi))
+    metadata = marker(0xE1, _exif(dpi, im))
+    if im is not None:
+        xmp = im.info.get("xmp")
+        if xmp:
+            metadata += marker(0xE1, b"http://ns.adobe.com/xap/1.0/\0" + xmp)
+        for name, payload in im.info.get("_jpeg_extra", ()):
+            metadata += marker(0xED if name == "APP13" else 0xFE, payload)
     if icc:
         chunks = [icc[i : i + 65519] for i in range(0, len(icc), 65519)]
         if len(chunks) > 255:
@@ -280,43 +309,66 @@ def encode_pixels(
         raise CompressionError("고비트 심도 이미지는 TIFF/PNG로 저장하세요.")
     icc = im.info.get("icc_profile")
     if im.mode in {"L", "LA"} and icc and fmt in {"webp", "avif"}:
-        try:
-            srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
-            alpha = im.getchannel("A") if im.mode == "LA" else None
-            im = ImageCms.profileToProfile(
-                im.convert("L"), ImageCms.ImageCmsProfile(io.BytesIO(icc)), srgb, outputMode="RGB"
-            )
-            if alpha is not None:
-                im.putalpha(alpha)
-            icc = srgb.tobytes()
-        except (ImageCms.PyCMSError, OSError) as exc:
-            raise CompressionError(
-                "회색조 프로파일을 변환할 수 없습니다. PNG/TIFF를 사용하세요."
-            ) from exc
+        raise CompressionError("회색조 색상 프로파일을 그대로 보존하려면 PNG/TIFF를 사용하세요.")
     if fmt == "jpeg":
         if "A" in im.getbands():
-            rgba = im.convert("RGBA")
-            background = Image.new("RGB", im.size, "white")
-            background.paste(rgba, mask=rgba.getchannel("A"))
-            im = background
+            raise CompressionError(
+                "JPEG는 투명도를 보존할 수 없습니다. PNG, WebP 또는 TIFF를 선택하세요."
+            )
         if settings.jpeg_engine == "jpegli" and im.mode not in {"CMYK", "L", "1"}:
             rgb = im.convert("RGB")
             data = pyjpegli.encode(rgb.tobytes(), rgb.width, rgb.height, quality=quality)
-            return jpeg_metadata(data, dpi, icc)
+            return jpeg_metadata(data, dpi, icc, im)
     stream = io.BytesIO()
     kwargs = {"icc_profile": icc} if icc else {}
-    if fmt in {"jpeg", "webp", "avif"}:
-        kwargs["exif"] = _exif(dpi)
+    if fmt in {"jpeg", "webp", "avif", "png"}:
+        kwargs["exif"] = _exif(dpi, im)
+    if im.info.get("xmp") and fmt in {"jpeg", "webp", "avif"}:
+        kwargs["xmp"] = im.info["xmp"]
     if fmt == "jpeg":
         im = im.convert("L" if im.mode in {"1", "L"} else "RGB")
         kwargs.update(quality=quality, optimize=True, progressive=False, subsampling=0, dpi=dpi)
+        extra = im.info.get("_jpeg_extra", ())
+        kwargs["extra"] = b"".join(
+            b"\xff"
+            + (b"\xed" if name == "APP13" else b"\xfe")
+            + struct.pack(">H", len(payload) + 2)
+            + payload
+            for name, payload in extra
+        )
     elif fmt == "png":
+        metadata = PngImagePlugin.PngInfo()
+        for name, value in im.info.get("_png_text", {}).items():
+            if isinstance(value, PngImagePlugin.iTXt):
+                metadata.add_itxt(name, value, value.lang, value.tkey)
+            else:
+                metadata.add_text(name, value)
+        if im.info.get("xmp"):
+            metadata.add_itxt("XML:com.adobe.xmp", im.info["xmp"].decode("utf-8"))
+        for name, value in (("gamma", "gAMA"), ("srgb", "sRGB"), ("chromaticity", "cHRM")):
+            if name not in im.info or (icc and name == "srgb"):
+                continue
+            number = im.info[name]
+            payload = (
+                bytes([number])
+                if name == "srgb"
+                else struct.pack(">I", round(number * 100000))
+                if name == "gamma"
+                else struct.pack(">8I", *(round(n * 100000) for n in number))
+            )
+            metadata.add(value.encode(), payload)
+        kwargs["pnginfo"] = metadata
         kwargs.update(optimize=False, compress_level=3, dpi=dpi)
     elif fmt == "webp":
-        kwargs.update(quality=quality, method=6, lossless=settings.content == "artwork", exact=True)
+        kwargs.update(quality=quality, method=4, lossless=settings.content == "artwork", exact=True)
     elif fmt == "avif":
+        # Pillow exposes one quality setting for color and alpha. Keep alpha
+        # lossless rather than silently changing transparency at low quality.
+        if "A" in im.getbands():
+            quality = 100
         kwargs.update(quality=quality, speed=6, subsampling="4:4:4", max_threads=2)
     elif fmt == "tiff":
+        kwargs["tiffinfo"] = im.info.get("_tiff_tags", {})
         kwargs.update(compression="group4" if im.mode == "1" else "tiff_adobe_deflate", dpi=dpi)
     if fmt == "jpeg":
         # Pillow underestimates the optimized 4:4:4 buffer for detailed photos.
@@ -338,13 +390,99 @@ def encode_pixels(
     return data
 
 
-def compress_image(
-    asset: Asset, settings: Settings, cancel: Event | None = None, frame: int = 0
-) -> Encoded:
+def compress_image(asset: Asset, settings: Settings, cancel: Event | None = None) -> Encoded:
     settings.validate()
     check_cancel(cancel)
-    if frame:
-        asset = image_asset(asset.path, frame)
+    if asset.frames > 1:
+        if asset.format != "TIFF":
+            raise CompressionError(
+                "움직임이나 여러 이미지를 잃지 않도록 이 다중 프레임 파일의 변환을 중단했습니다."
+            )
+        return _compress_multipage_tiff(asset, settings, cancel)
+    return _compress_image_frame(asset, settings, cancel)
+
+
+def _compress_multipage_tiff(asset: Asset, settings: Settings, cancel) -> Encoded:
+    if settings.output_format not in {"auto", "tiff"}:
+        raise CompressionError(
+            "여러 페이지를 한 파일에 유지하려면 TIFF를 선택하세요. PDF로 합치기도 가능합니다."
+        )
+    if (
+        settings.mode == "size"
+        and asset.size_bytes <= settings.max_bytes
+        and settings.print_width_mm is None
+    ):
+        return Encoded(
+            asset.path.read_bytes(),
+            ".tif",
+            asset.width,
+            asset.height,
+            asset.dpi_x,
+            asset.dpi_y,
+            pages=asset.frames,
+            details="TIFF · 원본 데이터 유지",
+        )
+    frames = []
+    notes = []
+    try:
+        for index in range(asset.frames):
+            check_cancel(cancel)
+            current = image_asset(asset.path, index)
+            im, warnings = load_image(current, index)
+            frames.append((im, current.inches(settings)))
+            notes.extend(warnings)
+
+        def candidate(scale):
+            buffer = io.BytesIO()
+            dimensions, dpis = [], []
+            with TiffImagePlugin.AppendingTiffWriter(buffer) as writer:
+                for im, inches in frames:
+                    check_cancel(cancel)
+                    factor = (
+                        min(
+                            1.0,
+                            settings.target_dpi * inches[0] / im.width,
+                            settings.target_dpi * inches[1] / im.height,
+                        )
+                        if settings.mode == "dpi"
+                        else scale
+                    )
+                    size = tuple(max(1, math.floor(v * factor + 1e-7)) for v in im.size)
+                    resized = resize_to(im, size)
+                    dpi = size[0] / inches[0], size[1] / inches[1]
+                    try:
+                        writer.write(encode_pixels(resized, "tiff", 100, dpi, settings))
+                        writer.newFrame()
+                    finally:
+                        if resized is not im:
+                            resized.close()
+                    dimensions.append(size)
+                    dpis.extend(dpi)
+            return Encoded(
+                buffer.getvalue(),
+                ".tif",
+                *dimensions[0],
+                min(dpis),
+                max(dpis),
+                warnings=list(dict.fromkeys(notes)),
+                pages=len(frames),
+                details=f"TIFF · {len(frames)}쪽 유지 · 무손실 코덱",
+            )
+
+        result = candidate(1.0)
+        if settings.mode == "size":
+            result, _ = fit_scale(
+                candidate, result, settings.max_bytes, 1 / max(max(im.size) for im, _ in frames)
+            )
+        return result
+    finally:
+        for im, _ in frames:
+            im.close()
+
+
+def _compress_image_frame(asset: Asset, settings: Settings, cancel: Event | None = None) -> Encoded:
+    settings.validate()
+    check_cancel(cancel)
     fmt = select_format(asset, settings)
     original_format = {
         "JPEG": "jpeg",
@@ -357,7 +495,6 @@ def compress_image(
         settings.mode == "size"
         and asset.size_bytes <= settings.max_bytes
         and asset.frames == 1
-        and asset.orientation == 1
         and original_format == fmt
         and settings.print_width_mm is None
     ):
@@ -377,11 +514,9 @@ def compress_image(
             warnings=notes,
             details=f"{fmt.upper()} · 이미 용량 상한 이내여서 원본 데이터 유지",
         )
-    im, notes = load_image(asset, frame)
+    im, notes = load_image(asset)
     resized_cache = None
     try:
-        if asset.has_alpha and fmt == "jpeg":
-            notes.append("JPEG는 투명도를 지원하지 않아 흰 배경으로 저장합니다.")
         if asset.dpi_x is None and settings.print_width_mm is None:
             notes.append(
                 f"원본 DPI 정보 없음: {settings.reference_dpi:g} DPI를 인쇄 크기의 기준으로 가정했습니다."
@@ -411,9 +546,11 @@ def compress_image(
                     resized_cache.close()
                 resized_cache = resize_to(im, size)
             dpi = size[0] / inches[0], size[1] / inches[1]
-            # Size mode searches the final PNG encoding, including optimization.
-            # It must not shrink the chosen output after deciding its resolution.
-            data = encode_pixels(resized_cache, fmt, quality, dpi, settings)
+            # Fit fast PNG bytes first. Run the expensive lossless optimizer only
+            # once, after choosing resolution; it can only make the result smaller.
+            data = encode_pixels(
+                resized_cache, fmt, quality, dpi, settings, optimize_png=settings.mode != "size"
+            )
             return Encoded(
                 data,
                 EXTENSIONS[fmt],
@@ -424,8 +561,11 @@ def compress_image(
                 details=f"{fmt.upper()} · {'사진 압축' if lossy else '무손실'}",
             )
 
-        floor = settings.min_quality if lossy else settings.quality
-        result = candidate(max_scale, floor if settings.mode == "size" else settings.quality)
+        alpha_avif = fmt == "avif" and "A" in im.getbands()
+        floor = 100 if alpha_avif else settings.min_quality if lossy else settings.quality
+        result = candidate(
+            max_scale, floor if settings.mode == "size" else 100 if alpha_avif else settings.quality
+        )
         if (
             asset.frames == 1
             and asset.orientation == 1
@@ -452,7 +592,26 @@ def compress_image(
                 result = fit_quality(
                     lambda q: candidate(scale, q), result, floor, settings.max_bytes
                 )
-                result = fill_quality_gap(candidate, result, scale, settings.max_bytes)
+            elif fmt == "png":
+                optimized = oxipng.optimize_from_memory(
+                    result.data, level=1, optimize_alpha=False, timeout=3
+                )
+                if len(optimized) < len(result.data):
+                    result.data = optimized
+                if result.size_bytes < settings.max_bytes * 0.90 and scale < 1:
+                    # Optimization sometimes saves >15%. Spend that gain on
+                    # resolution with one bounded correction, never another loop.
+                    proposed = min(
+                        1.0, scale * math.sqrt(settings.max_bytes * 0.94 / result.size_bytes)
+                    )
+                    correction = candidate(proposed, floor)
+                    optimized = oxipng.optimize_from_memory(
+                        correction.data, level=1, optimize_alpha=False, timeout=3
+                    )
+                    if len(optimized) < correction.size_bytes:
+                        correction.data = optimized
+                    if correction.size_bytes <= settings.max_bytes:
+                        result = correction
             result.details += f" · 상한의 {result.size_bytes / settings.max_bytes:.1%} 사용"
             if (
                 result.width,

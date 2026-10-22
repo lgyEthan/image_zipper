@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, QEvent, QTimer  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QColor, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -94,6 +94,25 @@ def dispose(window, app):
     )
     window.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_native_window_controls_and_simple_default_settings(app):
+    window = MainWindow()
+    try:
+        flags = window.windowFlags()
+        for flag in (
+            Qt.WindowType.WindowTitleHint,
+            Qt.WindowType.WindowCloseButtonHint,
+            Qt.WindowType.WindowMinimizeButtonHint,
+            Qt.WindowType.WindowMaximizeButtonHint,
+        ):
+            assert flags & flag
+        assert not flags & Qt.WindowType.FramelessWindowHint
+        assert window.advanced_panel.isHidden()
+        assert window.artwork.parent() == window.advanced_panel
+        assert window.measure_button.text() == "결과 확인"
+    finally:
+        dispose(window, app)
 
 
 def test_loading_and_settings_never_automatically_trial_encode(png, tmp_path, app, monkeypatch):

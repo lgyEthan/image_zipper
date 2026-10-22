@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
-import json
 import os
 import platform
 import plistlib
@@ -21,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def collect_licenses(destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
+    (destination / "versions.json").unlink(missing_ok=True)
     package_names = [
         "Pillow",
         "pillow-heif",
@@ -44,7 +44,10 @@ def collect_licenses(destination: Path) -> None:
                     target = destination / package_name / str(filename).replace("..", "_")
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(source, target)
-    (destination / "versions.json").write_text(json.dumps(versions, indent=2), encoding="utf-8")
+    (destination / "versions.txt").write_text(
+        "\n".join(f"{name}: {version}" for name, version in versions.items()) + "\n",
+        encoding="utf-8",
+    )
 
 
 def main() -> None:
@@ -151,7 +154,8 @@ def main() -> None:
             patch << 16,
         ):
             raise RuntimeError("Windows executable version does not match the application")
-    report = ROOT / "build" / "self-test.json"
+    report = ROOT / "build" / "self-test.txt"
+    (ROOT / "build" / "self-test.json").unlink(missing_ok=True)
     check_env = dict(env, QT_QPA_PLATFORM="offscreen")
     for _ in range(3):
         completed = subprocess.run(
@@ -159,14 +163,22 @@ def main() -> None:
         )
         if completed.returncode:
             if report.exists():
-                print(report.read_text(), flush=True)
+                print(report.read_text(encoding="utf-8"), flush=True)
             completed.check_returncode()
-        result = json.loads(report.read_text())
+        result = dict(
+            line.split(": ", 1)
+            for line in report.read_text(encoding="utf-8").splitlines()
+            if ": " in line
+        )
         if result["status"] != "passed" or result.get("version") != version:
             raise RuntimeError("Bundled application failed its smoke check")
-    results = json.loads(report.read_text())
-    results["verified_launches"] = 3
-    report.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    with report.open("a", encoding="utf-8") as stream:
+        stream.write("verified_launches: 3\n")
+    bundle = binary.parent.parent.parent if sys.platform == "darwin" else binary.parent
+    subprocess.run(
+        [sys.executable, "-I", str(ROOT / "scripts" / "check_privacy.py"), "--bundle", str(bundle)],
+        check=True,
+    )
     system = {"darwin": "macOS", "win32": "Windows"}.get(sys.platform, platform.system())
     machine = {"AMD64": "x64", "x86_64": "Intel" if sys.platform == "darwin" else "x64"}.get(
         platform.machine(), platform.machine()

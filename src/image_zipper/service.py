@@ -77,25 +77,17 @@ def save_asset(
 ) -> list[SavedResult]:
     results = []
     cached_result = cached.read([asset], settings, False) if cached else None
-    for frame in range(1 if asset.is_pdf else asset.frames):
-        check_cancel(cancel)
-        result = cached_result or (
-            compress_pdf(asset.path, settings, cancel)
-            if asset.is_pdf
-            else compress_image(asset, settings, cancel, frame)
-        )
-        require_target(result)
-        check_cancel(cancel)
-        label = f"_page_{frame + 1:03d}" if asset.frames > 1 and not asset.is_pdf else ""
-        path = atomic_output(
-            folder, f"{asset.path.stem}{label}_small", result.extension, result.data
-        )
-        saved = SavedResult(
-            asset.path, path, asset.size_bytes, result.size_bytes, result.dpi_x, result.warnings
-        )
-        results.append(saved)
-        if on_saved:
-            on_saved(saved)
+    check_cancel(cancel)
+    result = cached_result or measure(asset, settings, cancel)
+    require_target(result)
+    check_cancel(cancel)
+    path = atomic_output(folder, f"{asset.path.stem}_small", result.extension, result.data)
+    saved = SavedResult(
+        asset.path, path, asset.size_bytes, result.size_bytes, result.dpi_x, result.warnings
+    )
+    results.append(saved)
+    if on_saved:
+        on_saved(saved)
     return results
 
 

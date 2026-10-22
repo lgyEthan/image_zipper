@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 import time
 from pathlib import Path
@@ -15,13 +14,19 @@ from .models import Settings
 from .pdf import merge_pdf, render_preview
 
 
-def run(report_path: Path) -> int:
+def run(report_path: Path | None = None) -> int:
     results = {"version": __version__}
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+    if report_path:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write_results():
+        text = "\n".join(f"{key}: {value}" for key, value in results.items()) + "\n"
+        if report_path:
+            report_path.write_text(text, encoding="utf-8")
 
     def record(stage: str, status: str = "ok"):
         results[stage] = status
-        report_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        write_results()
 
     record("status", "running")
     try:
@@ -109,5 +114,5 @@ def run(report_path: Path) -> int:
     except Exception as exc:
         results["status"], results["error"] = "failed", str(exc)
         status = 1
-    report_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    write_results()
     return status

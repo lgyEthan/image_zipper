@@ -139,7 +139,7 @@ class TrialCache:
     def read(self, assets: list[Asset], settings: Settings, merged: bool) -> Encoded | None:
         if settings != self.settings or merged != self.merged or not self.result.target_met:
             return None
-        if not merged and (len(assets) != 1 or (assets[0].frames > 1 and not assets[0].is_pdf)):
+        if not merged and len(assets) != 1:
             return None
         try:
             if self.fingerprints != source_fingerprints(assets):

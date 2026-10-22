@@ -130,6 +130,14 @@ class Preview(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.WindowFullscreenButtonHint
+        )
         self.setWindowTitle("Image Zipper")
         self.setWindowIcon(app_icon())
         self.resize(1200, 820)
@@ -181,10 +189,10 @@ class MainWindow(QMainWindow):
         controls.setSpacing(10)
         controls.addWidget(label("작업", "section"))
         self.operation = QComboBox(self.settings_card)
-        self.operation.addItems(["이미지 압축", "PDF 병합"])
+        self.operation.addItems(["파일 압축", "PDF로 합치기"])
         self.operation.hide()
         self.navigation = []
-        for index, text in enumerate(("이미지 압축", "PDF 병합")):
+        for index, text in enumerate(("파일 압축", "PDF로 합치기")):
             button = QPushButton(text)
             button.setObjectName("navigation")
             button.setCheckable(True)
@@ -211,7 +219,7 @@ class MainWindow(QMainWindow):
         self.max_mib.setSuffix(" MB")
         self.max_mib.setValue(2)
         self.max_mib.setToolTip(
-            "1 MB = 1,000,000바이트. 개별 저장은 파일마다, PDF 병합은 전체에 적용합니다."
+            "1 MB = 1,000,000바이트. 개별 저장은 파일마다, PDF로 합치기은 전체에 적용합니다."
         )
         self.target_form.addRow("해상도", self.dpi)
         self.target_form.addRow("최대 용량", self.max_mib)
@@ -242,7 +250,6 @@ class MainWindow(QMainWindow):
         self.artwork.setToolTip(
             "손실 코덱을 사용하지 않습니다. 해상도를 낮추면 세부 정보는 줄어듭니다."
         )
-        controls.addWidget(self.artwork)
         controls.addSpacing(14)
         self.advanced_toggle = QPushButton("›  세부 설정")
         self.advanced_toggle.setObjectName("subtle")
@@ -252,6 +259,7 @@ class MainWindow(QMainWindow):
         advanced_layout = QVBoxLayout(self.advanced_panel)
         advanced_layout.setContentsMargins(0, 0, 0, 0)
         advanced_layout.setSpacing(10)
+        advanced_layout.addWidget(self.artwork)
         self.print_width = QDoubleSpinBox()
         self.print_width.setRange(0, 10000)
         self.print_width.setSpecialValueText("원본 기준")
@@ -310,7 +318,7 @@ class MainWindow(QMainWindow):
         queue_layout.setSpacing(12)
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 2, 0, 8)
-        self.queue_title = label("이미지 압축", "heading")
+        self.queue_title = label("파일 압축", "heading")
         toolbar.addWidget(self.queue_title)
         toolbar.addStretch()
         self.add_folder = QPushButton("폴더 추가")
@@ -362,8 +370,8 @@ class MainWindow(QMainWindow):
         for button in (self.up, self.down, self.remove, self.clear_all):
             button.setObjectName("subtle")
             actions.addWidget(button)
-        self.up.setToolTip("PDF 병합 순서를 위로 이동")
-        self.down.setToolTip("PDF 병합 순서를 아래로 이동")
+        self.up.setToolTip("PDF로 합치기 순서를 위로 이동")
+        self.down.setToolTip("PDF로 합치기 순서를 아래로 이동")
         actions.addStretch()
         self.total = label("항목 없음", "caption")
         actions.addWidget(self.total)
@@ -378,7 +386,7 @@ class MainWindow(QMainWindow):
         metrics = QHBoxLayout()
         self.estimate_title = label("선택 파일", "section")
         self.metric_label = label("—", "metric")
-        self.measure_button = QPushButton("정확히 계산")
+        self.measure_button = QPushButton("결과 확인")
         self.measure_button.setEnabled(False)
         self.measure_button.setToolTip("시험 압축으로 최종 파일 크기와 DPI를 확인합니다.")
         metrics.addWidget(self.estimate_title)
@@ -542,7 +550,7 @@ class MainWindow(QMainWindow):
         merge = self.operation.currentIndex() == 1
         for index, button in enumerate(self.navigation):
             button.setChecked(index == int(merge))
-        self.queue_title.setText("PDF 병합" if merge else "이미지 압축")
+        self.queue_title.setText("PDF로 합치기" if merge else "파일 압축")
         self.merge_name.setVisible(merge)
         self.format.setEnabled(not merge)
         is_size = self.mode.currentData() == "size"
@@ -588,7 +596,7 @@ class MainWindow(QMainWindow):
                     else f"{settings.target_dpi:g} DPI"
                 )
                 self.estimate_title.setText("최종 PDF 전체 예상")
-                note = "‘정확히 계산’으로 전체 PDF의 용량과 DPI를 확인합니다."
+                note = "‘결과 확인’으로 전체 PDF의 용량과 DPI를 확인합니다."
             else:
                 self.metric_label.setText(f"약 {dpi:.0f} DPI" if dpi else "이미지 DPI 분석 필요")
                 self.estimate_title.setText("선택 파일 예상")
@@ -605,7 +613,7 @@ class MainWindow(QMainWindow):
             self.estimate_note.setText(
                 reference
                 + (
-                    " · 여러 프레임 중 첫 프레임 예상"
+                    " · 여러 페이지 중 첫 페이지의 빠른 추정"
                     if not merge and asset.frames > 1 and not asset.is_pdf
                     else ""
                 )
@@ -740,7 +748,7 @@ class MainWindow(QMainWindow):
         if self.estimator:
             self.estimator.deleteLater()
             self.estimator = None
-        self.measure_button.setText("정확히 계산")
+        self.measure_button.setText("결과 확인")
 
     def _estimate_ready(self, revision, result, size_bytes, compressed):
         if revision != self.revision or self.closing:
@@ -756,7 +764,7 @@ class MainWindow(QMainWindow):
             cap = " · 목표 용량 미달 — 저장 안 함"
         self.estimate_detail.setText(f"시험 압축: {human_bytes(size_bytes)}{cap}\n{result.details}")
         scope = (
-            " · 첫 프레임 예상"
+            " · 전체 페이지"
             if self.selected_asset()
             and not self.selected_asset().is_pdf
             and self.selected_asset().frames > 1
@@ -1043,7 +1051,7 @@ def main() -> int:
         from .selftest import run
 
         index = sys.argv.index("--self-test")
-        path = Path(sys.argv[index + 1]) if len(sys.argv) > index + 1 else Path("self-test.json")
+        path = Path(sys.argv[index + 1]) if len(sys.argv) > index + 1 else None
         return run(path)
     app = QApplication(sys.argv)
     app.setApplicationName("Image Zipper")

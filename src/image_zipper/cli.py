@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
                                     "bytes": result.size_bytes,
                                     "dpi": result.dpi_x,
                                     "target_met": result.target_met,
-                                    "scope": "whole PDF" if asset.is_pdf else "first frame",
+                                    "scope": "whole file",
                                     "warnings": result.warnings,
                                 },
                                 ensure_ascii=False,

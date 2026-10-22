@@ -12,4 +12,11 @@ htmlcov/
 artifacts/
 .idea/
 .vscode/
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.pfx
+*.key
 

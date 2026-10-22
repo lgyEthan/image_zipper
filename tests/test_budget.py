@@ -42,7 +42,7 @@ def test_size_mode_spends_budget_above_dpi_preset_quality(photo, png, monkeypatc
 def test_png_final_optimized_bytes_are_close_to_limit(png, limit):
     result = compress_image(probe(png), Settings(mode="size", max_bytes=limit))
     assert result.target_met
-    assert 0.97 * limit <= result.size_bytes <= limit
+    assert 0.90 * limit <= result.size_bytes <= limit
     with Image.open(io.BytesIO(result.data)) as im:
         im.load()
         assert im.size == (result.width, result.height)
@@ -60,7 +60,7 @@ def test_pdf_decodes_each_image_once_while_fitting_budget(pdf_file, monkeypatch)
 
     monkeypatch.setattr(PdfImage, "as_pil_image", counted)
     result = compress_pdf(pdf_file, Settings(mode="size", max_bytes=20000, min_quality=60))
-    assert 0.97 * 20000 <= result.size_bytes <= 20000
+    assert 0.90 * 20000 <= result.size_bytes <= 20000
     assert len(calls) == 1
 
 
@@ -121,3 +121,36 @@ def test_cli_export_does_not_create_sidecar_report(png, tmp_path):
     folder = tmp_path / "output"
     assert main([str(png), "--output", str(folder), "--format", "jpeg"]) == 0
     assert [file.suffix for file in folder.iterdir()] == [".jpg"]
+
+
+def test_png_budget_limits_expensive_optimization_to_two_encodes(png, monkeypatch):
+    calls = []
+    optimize = imaging.oxipng.optimize_from_memory
+
+    def counted(data, **options):
+        calls.append(len(data))
+        return optimize(data, **options)
+
+    monkeypatch.setattr(imaging.oxipng, "optimize_from_memory", counted)
+    result = compress_image(probe(png), Settings(mode="size", max_bytes=50000))
+    assert result.target_met and result.size_bytes <= 50000
+    assert 1 <= len(calls) <= 2
+
+
+def test_close_enough_jpeg_does_not_reencode_to_fill_last_bytes(photo, tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    photo.save(source, compress_level=0)
+    settings = Settings(mode="size", min_quality=90, output_format="jpeg", jpeg_engine="pillow")
+    expected = encode_pixels(photo, "jpeg", 90, (300, 300), settings)
+    settings = replace(settings, max_bytes=round(len(expected) / 0.94))
+    calls = []
+    encode = imaging.encode_pixels
+
+    def counted(*args, **kwargs):
+        calls.append(args[2])
+        return encode(*args, **kwargs)
+
+    monkeypatch.setattr(imaging, "encode_pixels", counted)
+    result = compress_image(probe(source), settings)
+    assert 0.90 * settings.max_bytes <= result.size_bytes <= settings.max_bytes
+    assert calls == [90]
