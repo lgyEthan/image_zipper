@@ -1,0 +1,9 @@
+Pictumi artwork and test image
+
+app-icon.svg: original vector drawing created for Pictumi. It depicts a photo
+inside two crop corners. No Apple, Instagram, or other third-party icon assets
+were copied. check.svg and chevron.svg are simple original geometric controls.
+
+selftest.heic: original, synthetic 720 x 480 geometric landscape generated for
+codec verification. Contains no photograph, person, location, or capture metadata.
+The HEIC encoder is used only to create this fixture; it is not needed at runtime.

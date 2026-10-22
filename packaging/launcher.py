@@ -4,6 +4,6 @@ if __name__ == "__main__":
     import multiprocessing
 
     multiprocessing.freeze_support()
-    from image_zipper.app import main
+    from pictumi.app import main
 
     raise SystemExit(main())

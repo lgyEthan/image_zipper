@@ -12,8 +12,8 @@ from PySide6.QtGui import QColor, QPalette  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QScrollArea  # noqa: E402
 
-from image_zipper.app import MainWindow, configure_theme  # noqa: E402
-from image_zipper.imaging import probe  # noqa: E402
+from pictumi.app import MainWindow, configure_theme  # noqa: E402
+from pictumi.imaging import probe  # noqa: E402
 
 
 def spin(app, condition, timeout=30):
@@ -98,9 +98,9 @@ def dispose(window, app):
 
 
 def test_editor_drag_rotate_resize_undo_and_cancel(png, app):
-    from image_zipper.editor import EditorDialog
-    from image_zipper.edits import ImageEdits
-    from image_zipper.imaging import preview_source
+    from pictumi.editor import EditorDialog
+    from pictumi.edits import ImageEdits
+    from pictumi.imaging import preview_source
 
     asset = probe(png)
     before = png.read_bytes()
@@ -153,8 +153,8 @@ def test_editor_drag_rotate_resize_undo_and_cancel(png, app):
 
 
 def test_editor_settings_ignore_wheel_and_apply_updates_only_selected_file(png, tmp_path, app):
-    from image_zipper.editor import EditorDialog
-    from image_zipper.imaging import preview_source
+    from pictumi.editor import EditorDialog
+    from pictumi.imaging import preview_source
 
     second = tmp_path / "second.png"
     second.write_bytes(png.read_bytes())
@@ -202,7 +202,7 @@ def test_editor_settings_ignore_wheel_and_apply_updates_only_selected_file(png, 
 
 
 def test_editor_can_close_while_preview_process_is_starting(png, app):
-    from image_zipper.editor import EditorDialog
+    from pictumi.editor import EditorDialog
 
     dialog = EditorDialog(probe(png))
     dialog.show()
@@ -216,10 +216,10 @@ def test_editor_can_close_while_preview_process_is_starting(png, app):
 def test_crop_drag_handles_move_ratio_undo_and_reopen(png, app):
     from dataclasses import replace
 
-    from image_zipper.editor import EditorDialog
-    from image_zipper.editor_canvas import CROP, SIZE
-    from image_zipper.edits import edited_size
-    from image_zipper.imaging import preview_source
+    from pictumi.editor import EditorDialog
+    from pictumi.editor_canvas import CROP, SIZE
+    from pictumi.edits import edited_size
+    from pictumi.imaging import preview_source
 
     asset = probe(png)
     before = png.read_bytes()
@@ -315,9 +315,9 @@ def test_crop_drag_handles_move_ratio_undo_and_reopen(png, app):
 def test_crop_rotation_preserves_selected_content_and_ratio(png, app):
     from PIL import Image
 
-    from image_zipper.editor import EditorDialog
-    from image_zipper.edits import apply_edits
-    from image_zipper.imaging import preview_source
+    from pictumi.editor import EditorDialog
+    from pictumi.edits import apply_edits
+    from pictumi.imaging import preview_source
 
     asset = probe(png)
     dialog = EditorDialog(asset, preview_data=preview_source(asset)[0])
@@ -345,8 +345,8 @@ def test_crop_rotation_preserves_selected_content_and_ratio(png, app):
 
 
 def test_crop_drag_cancel_keyboard_and_wheel(png, app):
-    from image_zipper.editor import EditorDialog
-    from image_zipper.imaging import preview_source
+    from pictumi.editor import EditorDialog
+    from pictumi.imaging import preview_source
 
     asset = probe(png)
     dialog = EditorDialog(asset, preview_data=preview_source(asset)[0])
@@ -380,9 +380,9 @@ def test_crop_drag_cancel_keyboard_and_wheel(png, app):
 
 @pytest.mark.parametrize("handle", ["nw", "n", "ne", "e", "se", "s", "sw", "w"])
 def test_crop_all_handles_keep_ratio_and_stay_inside_image(png, app, handle):
-    from image_zipper.editor import EditorDialog
-    from image_zipper.edits import edited_size
-    from image_zipper.imaging import preview_source
+    from pictumi.editor import EditorDialog
+    from pictumi.edits import edited_size
+    from pictumi.imaging import preview_source
 
     asset = probe(png)
     dialog = EditorDialog(asset, preview_data=preview_source(asset)[0])
@@ -431,9 +431,9 @@ def test_crop_all_handles_keep_ratio_and_stay_inside_image(png, app, handle):
 
 
 def test_original_crop_ratio_survives_straightening_without_progressive_shrinking(png, app):
-    from image_zipper.editor import EditorDialog
-    from image_zipper.edits import edited_size
-    from image_zipper.imaging import preview_source
+    from pictumi.editor import EditorDialog
+    from pictumi.edits import edited_size
+    from pictumi.imaging import preview_source
 
     asset = probe(png)
     dialog = EditorDialog(asset, preview_data=preview_source(asset)[0])
@@ -560,7 +560,7 @@ def test_settings_still_accept_keyboard_and_explicit_menu_selection(app):
 
 
 def test_loading_and_settings_never_automatically_trial_encode(png, tmp_path, app, monkeypatch):
-    from image_zipper import app as app_module
+    from pictumi import app as app_module
 
     def no_estimate(*args, **kwargs):
         raise AssertionError("Adding/selecting files must not perform full trial compression")
@@ -659,7 +659,7 @@ def crash_after_completion(connection, kind, assets, settings, cancel, **options
 
 @pytest.mark.parametrize("job", [crash_export, crash_after_completion])
 def test_crashed_export_reports_failure_and_restores_controls(png, tmp_path, app, monkeypatch, job):
-    from image_zipper import workers
+    from pictumi import workers
 
     monkeypatch.setattr(workers, "run_job", job)
     window = MainWindow()
@@ -680,8 +680,8 @@ def test_crashed_export_reports_failure_and_restores_controls(png, tmp_path, app
 
 
 def test_export_cancelled_before_start_emits_completion(png, tmp_path, app):
-    from image_zipper.models import Settings
-    from image_zipper.workers import Exporter
+    from pictumi.models import Settings
+    from pictumi.workers import Exporter
 
     worker = Exporter([probe(png)], Settings(), tmp_path / "exports", None)
     completed = []
@@ -694,8 +694,8 @@ def test_export_cancelled_before_start_emits_completion(png, tmp_path, app):
 
 
 def test_estimated_size_can_exceed_two_gibibytes(app):
-    from image_zipper.models import Encoded, Settings
-    from image_zipper.workers import Estimator
+    from pictumi.models import Encoded, Settings
+    from pictumi.workers import Estimator
 
     worker = Estimator(1, [], Settings(), False)
     received = []
@@ -743,7 +743,7 @@ def test_file_accessibility_rows_survive_updates_and_removal(app):
     from PySide6.QtGui import QAccessible, QAccessibleActionInterface
     from PySide6.QtWidgets import QAbstractItemView, QTableWidgetItem
 
-    from image_zipper.file_table import FileTable
+    from pictumi.file_table import FileTable
 
     table = FileTable(2, 2)
     table.setHorizontalHeaderLabels(["File", "Size"])

@@ -6,16 +6,16 @@ from dataclasses import replace
 import pytest
 from PIL import Image
 
-from image_zipper import imaging, service
-from image_zipper.imaging import (
+from pictumi import imaging, service
+from pictumi.imaging import (
     compress_image,
     encode_pixels,
     preview_source,
     probe,
     sample_estimate,
 )
-from image_zipper.models import Settings, TrialCache, source_fingerprints
-from image_zipper.pdf import compress_pdf
+from pictumi.models import Settings, TrialCache, source_fingerprints
+from pictumi.pdf import compress_pdf
 
 
 def test_size_mode_spends_budget_above_dpi_preset_quality(photo, png, monkeypatch):
@@ -116,7 +116,7 @@ def test_trial_result_is_reused_only_with_unchanged_input_and_settings(png, tmp_
 
 
 def test_cli_export_does_not_create_sidecar_report(png, tmp_path):
-    from image_zipper.cli import main
+    from pictumi.cli import main
 
     folder = tmp_path / "output"
     assert main([str(png), "--output", str(folder), "--format", "jpeg"]) == 0

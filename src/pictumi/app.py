@@ -63,20 +63,7 @@ def label(text: str, name: str = "", wrap: bool = False) -> QLabel:
 
 
 def app_icon() -> QIcon:
-    pixmap = QPixmap(128, 128)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#087be8"))
-    painter.drawRoundedRect(4, 4, 120, 120, 28, 28)
-    painter.setBrush(QColor("#ffffff"))
-    painter.drawRoundedRect(28, 29, 72, 70, 9, 9)
-    painter.setBrush(QColor("#087be8"))
-    for y in range(36, 93, 11):
-        painter.drawRect(58 if (y // 11) % 2 else 65, y, 10, 7)
-    painter.end()
-    return QIcon(pixmap)
+    return QIcon(str(Path(__file__).with_name("assets") / "app-icon.svg"))
 
 
 def document_icon(size=64) -> QIcon:
@@ -139,7 +126,7 @@ class MainWindow(QMainWindow):
             | Qt.WindowType.WindowMinMaxButtonsHint
             | Qt.WindowType.WindowFullscreenButtonHint
         )
-        self.setWindowTitle("Image Zipper")
+        self.setWindowTitle("Pictumi")
         self.setWindowIcon(app_icon())
         self.resize(1200, 820)
         self.setMinimumSize(1040, 700)
@@ -157,7 +144,7 @@ class MainWindow(QMainWindow):
         self.sample_cache = {}
         self.measured_revision = None
         self.trial_cache = None
-        self.trial_directory = tempfile.TemporaryDirectory(prefix="image-zipper-preview-")
+        self.trial_directory = tempfile.TemporaryDirectory(prefix="pictumi-preview-")
         self.revision = 0
         self.closing = False
         self.debounce = QTimer(self)
@@ -484,14 +471,19 @@ class MainWindow(QMainWindow):
         close_action.triggered.connect(self.close)
         file_menu.addAction(close_action)
         help_menu = self.menuBar().addMenu("도움말")
-        about = QAction("Image Zipper 정보", self)
+        about = QAction("Pictumi 정보", self)
         about.setMenuRole(QAction.MenuRole.AboutRole)
         about.triggered.connect(
             lambda: QMessageBox.about(
-                self, "Image Zipper", f"Image Zipper {__version__}\n오프라인 이미지·PDF 압축"
+                self,
+                "Pictumi 정보",
+                f"Pictumi · 픽투미\n버전 {__version__}\n\n이미지 편집과 이미지·PDF 압축\n모든 작업은 이 기기에서 처리됩니다.",
             )
         )
         help_menu.addAction(about)
+        licenses = QAction("오픈소스 라이선스…", self)
+        licenses.triggered.connect(self._show_licenses)
+        help_menu.addAction(licenses)
         self.add_files.clicked.connect(self._pick_files)
         self.add_folder.clicked.connect(self._pick_input_folder)
         self.choose_folder.clicked.connect(self._pick_output)
@@ -521,6 +513,47 @@ class MainWindow(QMainWindow):
         self.measure_button.clicked.connect(self._start_estimate)
         self.edit_button.clicked.connect(self._open_editor)
         self.table.cellDoubleClicked.connect(lambda *_: self._open_editor())
+
+    def _show_licenses(self):
+        root = (
+            Path(sys._MEIPASS) / "third-party-licenses"
+            if getattr(sys, "frozen", False)
+            else Path(__file__).resolve().parents[2] / "build/third-party-licenses"
+        )
+        notice = root / "THIRD_PARTY_NOTICES.txt"
+        if not notice.exists():
+            root = Path(__file__).resolve().parents[2] / "packaging"
+            notice = root / "THIRD_PARTY_NOTICES.txt"
+        dialog = QDialog(self)
+        dialog.setWindowTitle("오픈소스 라이선스")
+        dialog.resize(680, 560)
+        layout = QVBoxLayout(dialog)
+        text = QPlainTextEdit(dialog)
+        text.setReadOnly(True)
+        text.setPlainText(
+            notice.read_text(encoding="utf-8")
+            if notice.exists()
+            else "https://github.com/lgyEthan/pictumi"
+        )
+        layout.addWidget(text)
+        buttons = QHBoxLayout()
+        folder = QPushButton("라이선스 폴더 열기")
+        folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(root))))
+        sources = QPushButton("해당 버전 소스")
+        sources.clicked.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl(f"https://github.com/lgyEthan/pictumi/releases/tag/v{__version__}")
+            )
+        )
+        close = QPushButton("닫기")
+        close.setDefault(True)
+        close.clicked.connect(dialog.accept)
+        buttons.addWidget(folder)
+        buttons.addWidget(sources)
+        buttons.addStretch()
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        dialog.exec()
 
     def settings(self) -> Settings:
         settings = Settings(
@@ -1134,8 +1167,8 @@ def main() -> int:
         path = Path(sys.argv[index + 1]) if len(sys.argv) > index + 1 else None
         return run(path)
     app = QApplication(sys.argv)
-    app.setApplicationName("Image Zipper")
-    app.setOrganizationName("ImageZipper")
+    app.setApplicationName("Pictumi")
+    app.setOrganizationName("Pictumi")
     configure_theme(app)
     app.styleHints().colorSchemeChanged.connect(lambda _: configure_theme(app))
     window = MainWindow()

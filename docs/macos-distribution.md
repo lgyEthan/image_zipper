@@ -27,13 +27,13 @@ GitHub로 배포하는 Mac 앱은 **Developer ID Application** 인증서로 서�
 
 ```bash
 .venv/bin/python -I scripts/prepare_macos_distribution.py \
-  --app dist/ImageZipper.app \
-  --archive artifacts/signing-macos/ImageZipper-arm64.xcarchive \
+  --app dist/Pictumi.app \
+  --archive artifacts/signing-macos/Pictumi-arm64.xcarchive \
   --identity 'Developer ID Application: YOUR NAME (TEAMID)'
 
 xcodebuild -exportArchive \
-  -archivePath artifacts/signing-macos/ImageZipper-arm64.xcarchive \
-  -exportOptionsPlist artifacts/signing-macos/ImageZipper-arm64.export-options.plist \
+  -archivePath artifacts/signing-macos/Pictumi-arm64.xcarchive \
+  -exportOptionsPlist artifacts/signing-macos/Pictumi-arm64.export-options.plist \
   -allowProvisioningUpdates
 ```
 
@@ -41,30 +41,30 @@ xcodebuild -exportArchive \
 
 제출한 `.xcarchive`를 Xcode로 열고 Organizer의 **Show Status Log**에서 **Ready to distribute**를 확인합니다. Xcode가 파일 미리보기로 열었다면 **Open with Xcode**를 누릅니다. Organizer는 아카이브를 관리 폴더로 가져오므로, 원래 경로의 상태 파일과 화면의 상태가 다를 수 있습니다. 승인된 항목에서 **Export Notarized App / Export App…**으로 공증 티켓이 포함된 앱을 내보냅니다. 다시 제출할 필요는 없습니다.
 
-Intel CI 앱은 ZIP 체크섬을 확인한 뒤 별도 작업 폴더에 풀고 같은 스크립트에 `--resign`을 추가합니다. 실행 파일과 라이브러리, 프레임워크, 최상위 앱 순서로 서명합니다. 이 옵션은 지정한 앱을 수정하므로 원본 ZIP을 보관하고 복사본에 사용합니다. 아카이브 이름도 `ImageZipper-Intel.xcarchive`로 구분합니다. 서명 후 Intel Mac 또는 Rosetta에서 `--self-test`를 실행하고 각각 공증을 제출합니다.
+Intel CI 앱은 ZIP 체크섬을 확인한 뒤 별도 작업 폴더에 풀고 같은 스크립트에 `--resign`을 추가합니다. 실행 파일과 라이브러리, 프레임워크, 최상위 앱 순서로 서명합니다. 이 옵션은 지정한 앱을 수정하므로 원본 ZIP을 보관하고 복사본에 사용합니다. 아카이브 이름도 `Pictumi-Intel.xcarchive`로 구분합니다. 서명 후 Intel Mac 또는 Rosetta에서 `--self-test`를 실행하고 각각 공증을 제출합니다.
 
 ## notarytool을 사용하는 대안
 
 자동화 환경에서 `notarytool`을 쓰려면 공증용 계정 정보를 로컬 키체인에 등록합니다.
 
 ```bash
-xcrun notarytool store-credentials image-zipper
+xcrun notarytool store-credentials pictumi
 ```
 
 명령이 요구하는 Apple Account, Team ID, 앱 전용 암호를 터미널의 대화형 입력으로 제공합니다. 앱 전용 암호나 개인 키를 저장소·채팅에 넣지 않습니다. 기존 공증 프로필이나 App Store Connect API 키도 사용할 수 있습니다.
 
 ```bash
 # 실제 빌드에서 생성된 -signed.zip 경로를 지정합니다.
-xcrun notarytool submit dist/ImageZipper-v0.1.3-macOS-arm64-signed.zip \
-  --keychain-profile image-zipper --wait
+xcrun notarytool submit dist/Pictumi-v0.1.7-macOS-arm64-signed.zip \
+  --keychain-profile pictumi --wait
 ```
 
-Apple이 반환한 제출 ID를 기록하고 **Accepted** 상태를 확인합니다. 응답이 끊기거나 대기 시간이 끝나면 같은 제출 ID로 `xcrun notarytool info ID --keychain-profile image-zipper`를 실행합니다. 거절된 경우 `xcrun notarytool log ID --keychain-profile image-zipper`로 원인을 확인합니다.
+Apple이 반환한 제출 ID를 기록하고 **Accepted** 상태를 확인합니다. 응답이 끊기거나 대기 시간이 끝나면 같은 제출 ID로 `xcrun notarytool info ID --keychain-profile pictumi`를 실행합니다. 거절된 경우 `xcrun notarytool log ID --keychain-profile pictumi`로 원인을 확인합니다.
 
 Accepted 이후 앱에 공증 티켓을 부착하고 확인합니다.
 
 ```bash
-xcrun stapler staple dist/ImageZipper.app
+xcrun stapler staple dist/Pictumi.app
 ```
 
 ## 배포 직전 검증
@@ -72,22 +72,22 @@ xcrun stapler staple dist/ImageZipper.app
 Xcode에서 내보낸 앱에는 티켓이 이미 부착되어 있습니다. 아래 경로는 실제 공증된 앱 경로로 바꿉니다. 세 명령이 모두 성공하고 Gatekeeper 결과가 `source=Notarized Developer ID`인지 확인합니다.
 
 ```bash
-xcrun stapler validate dist/ImageZipper.app
-codesign --verify --deep --strict dist/ImageZipper.app
-spctl --assess --type execute --verbose=4 dist/ImageZipper.app
+xcrun stapler validate dist/Pictumi.app
+codesign --verify --deep --strict dist/Pictumi.app
+spctl --assess --type execute --verbose=4 dist/Pictumi.app
 ```
 
 티켓을 붙인 앱으로 **새 ZIP을 만든 뒤** SHA-256을 다시 계산합니다. 공증에 제출했던 ZIP을 그대로 배포하면 로컬에 부착한 티켓이 포함되지 않습니다.
 
 ```bash
-ditto -c -k --sequesterRsrc --keepParent dist/ImageZipper.app \
-  dist/ImageZipper-v0.1.3-macOS-arm64-notarized.zip
+ditto -c -k --sequesterRsrc --keepParent dist/Pictumi.app \
+  dist/Pictumi-v0.1.7-macOS-arm64-notarized.zip
 cd dist
-shasum -a 256 ImageZipper-v0.1.3-macOS-arm64-notarized.zip \
-  > ImageZipper-v0.1.3-macOS-arm64-notarized.zip.sha256
+shasum -a 256 Pictumi-v0.1.7-macOS-arm64-notarized.zip \
+  > Pictumi-v0.1.7-macOS-arm64-notarized.zip.sha256
 ```
 
-생성한 ZIP을 새 폴더에 풀고 티켓·서명·Gatekeeper 검사를 다시 수행합니다. 압축을 푼 앱의 `Contents/MacOS/ImageZipper --self-test report.json`을 실행해 네이티브 코덱과 GUI도 검사합니다. 검증 보고서와 SHA-256을 ZIP과 함께 배포합니다.
+생성한 ZIP을 새 폴더에 풀고 티켓·서명·Gatekeeper 검사를 다시 수행합니다. 압축을 푼 앱의 `Contents/MacOS/Pictumi --self-test report.txt`을 실행해 네이티브 코덱과 GUI도 검사합니다. 개인 경로가 없는 SHA-256 체크섬을 ZIP과 함께 배포합니다. 검증 보고서는 로컬에 보관합니다.
 
 Intel 빌드에도 별도로 서명·공증·티켓 검증을 적용합니다. 위 `arm64` 경로는 실제 플랫폼에 맞게 바꿉니다. 성공한 공증·Gatekeeper 검증을 확인하기 전에는 기존 공개 릴리스를 공증 완료로 표시하지 않습니다.
 

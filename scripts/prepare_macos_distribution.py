@@ -68,8 +68,8 @@ def main():
     team = team_match.group(1)
     with (app / "Contents/Info.plist").open("rb") as file:
         metadata = plistlib.load(file)
-    if metadata["CFBundleIdentifier"] != "com.lgyethan.imagezipper":
-        parser.error("Only Image Zipper application bundles are supported")
+    if metadata["CFBundleIdentifier"] != "com.lgyethan.pictumi":
+        parser.error("Only Pictumi application bundles are supported")
     binary = app / "Contents/MacOS" / metadata["CFBundleExecutable"]
     architecture = run("lipo", "-archs", str(binary)).stdout.strip().split()
     macho = sorted(
@@ -128,8 +128,8 @@ def main():
                 "ApplicationProperties": properties,
                 "ArchiveVersion": 2,
                 "CreationDate": datetime.datetime.now(datetime.UTC).replace(tzinfo=None),
-                "Name": "Image Zipper",
-                "SchemeName": "ImageZipper",
+                "Name": "Pictumi",
+                "SchemeName": "Pictumi",
             },
             file,
         )

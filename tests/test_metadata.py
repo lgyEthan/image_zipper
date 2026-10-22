@@ -8,9 +8,9 @@ import pikepdf
 import pytest
 from PIL import Image, PngImagePlugin
 
-from image_zipper.imaging import compress_image, probe
-from image_zipper.models import Settings
-from image_zipper.pdf import compress_pdf
+from pictumi.imaging import compress_image, probe
+from pictumi.models import Settings
+from pictumi.pdf import compress_pdf
 
 
 @pytest.mark.parametrize("output_format", ["jpeg", "png", "webp", "avif", "tiff"])

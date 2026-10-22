@@ -35,7 +35,7 @@ def atomic_output(folder: Path, stem: str, extension: str, data: bytes) -> Path:
     temp = None
     try:
         with tempfile.NamedTemporaryFile(
-            prefix=".image-zipper-", suffix=".tmp", dir=folder, delete=False
+            prefix=".pictumi-", suffix=".tmp", dir=folder, delete=False
         ) as stream:
             temp = Path(stream.name)
             stream.write(data)

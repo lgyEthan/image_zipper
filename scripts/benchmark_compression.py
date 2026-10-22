@@ -22,9 +22,9 @@ def main():
     if args.repeat < 1:
         parser.error("repeat must be positive")
     sys.path.insert(0, str(args.source_root.resolve()))
-    from image_zipper.imaging import compress_image, probe
-    from image_zipper.models import Settings
-    from image_zipper.pdf import compress_pdf, merge_pdf
+    from pictumi.imaging import compress_image, probe
+    from pictumi.models import Settings
+    from pictumi.pdf import compress_pdf, merge_pdf
 
     asset = probe(args.input.resolve())
     settings = Settings(

@@ -97,7 +97,7 @@ def check_bundle(root: Path) -> list[str]:
                 ):
                     continue
             problems.append(f"bundle {relative}: {kind}")
-        if path.name not in {"ImageZipper", "ImageZipper.exe"}:
+        if path.name not in {"Pictumi", "Pictumi.exe"}:
             continue
         archive = CArchiveReader(str(path))
         for name in archive.toc:
@@ -118,7 +118,7 @@ def check_bundle(root: Path) -> list[str]:
                         problems.extend(f"bundle code {module}: {kind}" for kind in findings(raw))
 
             for module in pyz.toc:
-                if module.startswith("image_zipper"):
+                if module.startswith("pictumi"):
                     inspect_code(pyz.extract(module), module)
     return problems
 

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from threading import Event
 
 import pytest
 from PIL import Image, JpegImagePlugin
 
-from image_zipper.imaging import compress_image, probe
-from image_zipper.models import Cancelled, CompressionError, Settings
-from image_zipper.service import save_asset
+from pictumi.imaging import compress_image, probe
+from pictumi.models import Cancelled, CompressionError, Settings
+from pictumi.service import save_asset
 
 
 @pytest.mark.parametrize(
@@ -25,7 +26,11 @@ from image_zipper.service import save_asset
 )
 def test_supported_formats(photo, tmp_path, fmt, extension):
     path = tmp_path / f"input{extension}"
-    photo.save(path, format=fmt)
+    if fmt == "HEIF":
+        fixture = Path(__file__).resolve().parents[1] / "src/pictumi/assets/selftest.heic"
+        path.write_bytes(fixture.read_bytes())
+    else:
+        photo.save(path, format=fmt)
     asset = probe(path)
     result = compress_image(
         asset, Settings(target_dpi=150, output_format="jpeg", print_width_mm=60.96)

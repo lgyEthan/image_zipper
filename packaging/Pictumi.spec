@@ -11,7 +11,7 @@ root = Path(SPECPATH).parent
 version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 icon = str(root / "build" / "app-icon.png")
 datas = [
-    (str(root / "src" / "image_zipper" / "assets"), "image_zipper/assets"),
+    (str(root / "src" / "pictumi" / "assets"), "pictumi/assets"),
     (str(root / "build" / "third-party-licenses"), "third-party-licenses"),
 ]
 datas += copy_metadata("pikepdf")
@@ -45,11 +45,11 @@ if sys.platform == "win32":
                         "040904B0",
                         [
                             StringStruct("CompanyName", "lgyEthan"),
-                            StringStruct("FileDescription", "Image Zipper"),
+                            StringStruct("FileDescription", "Pictumi"),
                             StringStruct("FileVersion", version),
-                            StringStruct("InternalName", "ImageZipper"),
-                            StringStruct("OriginalFilename", "ImageZipper.exe"),
-                            StringStruct("ProductName", "Image Zipper"),
+                            StringStruct("InternalName", "Pictumi"),
+                            StringStruct("OriginalFilename", "Pictumi.exe"),
+                            StringStruct("ProductName", "Pictumi"),
                             StringStruct("ProductVersion", version),
                         ],
                     )
@@ -65,6 +65,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
+    excludes=["tkinter", "PIL.ImageTk"],
 )
 pyz = PYZ(a.pure)
 exe = EXE(
@@ -72,21 +73,21 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="ImageZipper",
+    name="Pictumi",
     console=False,
     icon=icon,
     version=windows_version,
     codesign_identity=(
-        os.environ.get("IMAGE_ZIPPER_CODESIGN_IDENTITY") if sys.platform == "darwin" else None
+        os.environ.get("PICTUMI_CODESIGN_IDENTITY") if sys.platform == "darwin" else None
     ),
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="ImageZipper")
+coll = COLLECT(exe, a.binaries, a.datas, name="Pictumi")
 if sys.platform == "darwin":
     app = BUNDLE(
         coll,
-        name="ImageZipper.app",
+        name="Pictumi.app",
         icon=icon,
-        bundle_identifier="com.lgyethan.imagezipper",
+        bundle_identifier="com.lgyethan.pictumi",
         version=version,
         info_plist={"CFBundleVersion": version, "LSMinimumSystemVersion": "15.0"},
     )

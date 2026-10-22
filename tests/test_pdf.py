@@ -10,9 +10,9 @@ from conftest import make_pdf
 from pikepdf import Array, Dictionary, Name
 from PIL import Image
 
-from image_zipper.imaging import probe
-from image_zipper.models import CompressionError, Settings
-from image_zipper.pdf import PDFIUM_LOCK, compress_pdf, merge_pdf, render_preview
+from pictumi.imaging import probe
+from pictumi.models import CompressionError, Settings
+from pictumi.pdf import PDFIUM_LOCK, compress_pdf, merge_pdf, render_preview
 
 
 def text_content(data: bytes) -> str:

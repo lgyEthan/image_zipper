@@ -30,7 +30,7 @@ def run(report_path: Path | None = None) -> int:
 
     record("status", "running")
     try:
-        with tempfile.TemporaryDirectory(prefix="image-zipper-check-") as directory:
+        with tempfile.TemporaryDirectory(prefix="pictumi-check-") as directory:
             root = Path(directory)
             source = Image.new("RGB", (120, 80), (36, 118, 100))
             for fmt, extension in (
@@ -43,7 +43,12 @@ def run(report_path: Path | None = None) -> int:
                 ("WEBP", "webp"),
             ):
                 path = root / f"input.{extension}"
-                source.save(path, format=fmt)
+                if fmt == "HEIF":
+                    path.write_bytes(
+                        (Path(__file__).with_name("assets") / "selftest.heic").read_bytes()
+                    )
+                else:
+                    source.save(path, format=fmt)
                 result = compress_image(
                     probe(path), Settings(mode="original", output_format="jpeg")
                 )
@@ -69,7 +74,7 @@ def run(report_path: Path | None = None) -> int:
         window = MainWindow()
         window.show()
         app.processEvents()
-        with tempfile.TemporaryDirectory(prefix="image-zipper-gui-check-") as directory:
+        with tempfile.TemporaryDirectory(prefix="pictumi-gui-check-") as directory:
             root = Path(directory)
             path = root / "input.png"
             Image.effect_noise((600, 400), 30).convert("RGB").save(path, dpi=(300, 300))

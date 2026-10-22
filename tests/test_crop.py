@@ -7,7 +7,7 @@ import pikepdf
 import pytest
 from PIL import Image, ImageChops, ImageDraw, ImageStat
 
-from image_zipper.edits import (
+from pictumi.edits import (
     ImageEdits,
     Mosaic,
     apply_edits,
@@ -15,10 +15,10 @@ from image_zipper.edits import (
     edited_size,
     source_point,
 )
-from image_zipper.imaging import compress_image, load_image, probe
-from image_zipper.models import Settings, TrialCache, source_fingerprints
-from image_zipper.pdf import merge_pdf
-from image_zipper.service import save_asset
+from pictumi.imaging import compress_image, load_image, probe
+from pictumi.models import Settings, TrialCache, source_fingerprints
+from pictumi.pdf import merge_pdf
+from pictumi.service import save_asset
 
 
 @pytest.mark.parametrize("mode", ["RGB", "RGBA", "L", "CMYK"])

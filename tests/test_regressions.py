@@ -9,9 +9,9 @@ from conftest import make_pdf
 from pikepdf import Name
 from PIL import Image, PngImagePlugin
 
-from image_zipper.imaging import compress_image, probe
-from image_zipper.models import Settings
-from image_zipper.pdf import compress_pdf
+from pictumi.imaging import compress_image, probe
+from pictumi.models import Settings
+from pictumi.pdf import compress_pdf
 
 
 def test_inactive_mode_controls_do_not_constrain_validation():

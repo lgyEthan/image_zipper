@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#279AAB"/>
+      <stop offset="1" stop-color="#174D72"/>
+    </linearGradient>
+    <linearGradient id="photo" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#FAFDFC"/>
+      <stop offset="1" stop-color="#D9EEEA"/>
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="214" fill="url(#tile)"/>
+  <rect x="246" y="266" width="532" height="524" rx="48" fill="#103C55" opacity=".2"/>
+  <rect x="246" y="250" width="532" height="524" rx="48" fill="url(#photo)"/>
+  <g>
+    <circle cx="650" cy="378" r="52" fill="#EDB56A"/>
+    <path d="M246 690 430 466Q450 442 470 466L716 774H294Q246 774 246 726Z" fill="#62B4AC"/>
+    <path d="M416 774 632 538Q650 518 670 540L778 670V726Q778 774 730 774Z" fill="#267B83"/>
+  </g>
+  <g fill="none" stroke="#FFF" stroke-width="32" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M200 352V224Q200 200 224 200H352"/>
+    <path d="M672 824H800Q824 824 824 800V672"/>
+  </g>
+</svg>

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.metadata
 import os
 import platform
 import plistlib
@@ -18,36 +17,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def collect_licenses(destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    (destination / "versions.json").unlink(missing_ok=True)
-    package_names = [
-        "Pillow",
-        "pillow-heif",
-        "pikepdf",
-        "pypdfium2",
-        "img2pdf",
-        "PySide6-Essentials",
-        "shiboken6",
-        "pyoxipng",
-        "pyjpegli",
-        "lxml",
-    ]
-    versions = {}
-    for package_name in package_names:
-        package = importlib.metadata.distribution(package_name)
-        versions[package_name] = package.version
-        for filename in package.files or ():
-            if any(word in filename.name.lower() for word in ("license", "copying", "notice")):
-                source = Path(package.locate_file(filename))
-                if source.is_file():
-                    target = destination / package_name / str(filename).replace("..", "_")
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(source, target)
-    (destination / "versions.txt").write_text(
-        "\n".join(f"{name}: {version}" for name, version in versions.items()) + "\n",
-        encoding="utf-8",
-    )
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from licenses import collect_licenses  # noqa: E402
 
 
 def main() -> None:
@@ -74,7 +45,12 @@ def main() -> None:
             parser.error("Select one installed, valid Developer ID Application signing identity")
         identity = matches[0]
     os.chdir(ROOT)
-    from image_zipper import __version__
+    import pillow_heif
+
+    codecs = pillow_heif.libheif_info()
+    if any(name in str(codecs["encoders"]).lower() for name in ("x265", "x264")):
+        raise RuntimeError("Run scripts/build_heif_decoder.py before packaging: GPL encoders found")
+    from pictumi import __version__
 
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
         "version"
@@ -84,9 +60,9 @@ def main() -> None:
     licenses = ROOT / "build" / "third-party-licenses"
     collect_licenses(licenses)
     env = dict(os.environ)
-    env.pop("IMAGE_ZIPPER_CODESIGN_IDENTITY", None)
+    env.pop("PICTUMI_CODESIGN_IDENTITY", None)
     if identity:
-        env["IMAGE_ZIPPER_CODESIGN_IDENTITY"] = identity
+        env["PICTUMI_CODESIGN_IDENTITY"] = identity
     env["PYINSTALLER_CONFIG_DIR"] = str(ROOT / "build" / "pyinstaller-cache")
     command = [
         sys.executable,
@@ -95,27 +71,27 @@ def main() -> None:
         "PyInstaller",
         "--noconfirm",
         "--clean",
-        str(ROOT / "packaging" / "ImageZipper.spec"),
+        str(ROOT / "packaging" / "Pictumi.spec"),
     ]
     from PySide6.QtWidgets import QApplication
 
-    from image_zipper.app import app_icon
+    from pictumi.app import app_icon
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
-    app.setApplicationName("Image Zipper build")
+    app.setApplicationName("Pictumi build")
     icon = ROOT / "build" / "app-icon.png"
-    app_icon().pixmap(256, 256).save(str(icon))
+    app_icon().pixmap(1024, 1024).save(str(icon))
     subprocess.run(command, check=True, env=env)
     binary = (
         ROOT
         / "dist"
         / (
-            "ImageZipper.app/Contents/MacOS/ImageZipper"
+            "Pictumi.app/Contents/MacOS/Pictumi"
             if sys.platform == "darwin"
-            else "ImageZipper/ImageZipper.exe"
+            else "Pictumi/Pictumi.exe"
             if sys.platform == "win32"
-            else "ImageZipper/ImageZipper"
+            else "Pictumi/Pictumi"
         )
     )
     if sys.platform == "darwin":
@@ -183,7 +159,7 @@ def main() -> None:
     machine = {"AMD64": "x64", "x86_64": "Intel" if sys.platform == "darwin" else "x64"}.get(
         platform.machine(), platform.machine()
     )
-    name = f"ImageZipper-v{version}-{system}-{machine}"
+    name = f"Pictumi-v{version}-{system}-{machine}"
     if identity:
         # A valid signature alone is not Apple notarization.
         name += "-signed"
@@ -195,13 +171,13 @@ def main() -> None:
                 "-k",
                 "--sequesterRsrc",
                 "--keepParent",
-                "dist/ImageZipper.app",
+                "dist/Pictumi.app",
                 f"dist/{name}.zip",
             ],
             check=True,
         )
     else:
-        shutil.make_archive(str(ROOT / "dist" / name), "zip", ROOT / "dist", "ImageZipper")
+        shutil.make_archive(str(ROOT / "dist" / name), "zip", ROOT / "dist", "Pictumi")
     archive = ROOT / "dist" / f"{name}.zip"
     with archive.open("rb") as file:
         checksum = hashlib.file_digest(file, "sha256").hexdigest()

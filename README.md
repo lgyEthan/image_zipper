@@ -1,4 +1,4 @@
-# Image Zipper
+# Pictumi · 픽투미
 
 Windows와 Mac에서 실행하는 **오프라인 이미지·PDF 압축 프로그램**입니다. 여러 파일을 불러와 DPI 또는 최대 파일 용량을 기준으로 줄이고, 선택한 폴더에 개별 저장하거나 하나의 PDF로 병합합니다.
 
@@ -13,6 +13,7 @@ Windows와 Mac에서 실행하는 **오프라인 이미지·PDF 압축 프로그
 - 이미지 여러 장과 여러 페이지 TIFF를 PDF로 병합. PDF 파일도 페이지 단위로 함께 넣을 수 있습니다.
 - PDF 안의 **텍스트·벡터·페이지 크기를 유지**하면서 적합한 내부 이미지를 줄이고 스트림을 최적화합니다.
 - EXIF 회전 보정, ICC 프로파일 보존, 알파 채널 지원, 동일 이름 충돌 방지, 원본 파일 보호.
+- 직접 영역 지정·이동·핸들 조절로 자르기, 원본·1:1·4:5·3:2·16:9 비율 선택.
 - 사진별 모자이크, 픽셀 크기 조절, 90° 회전·기울기 보정, 실행 취소·다시 실행. 메타데이터 삭제 여부 선택.
 
 네트워크 업로드·계정·서버는 사용하지 않습니다.
@@ -21,19 +22,19 @@ Windows와 Mac에서 실행하는 **오프라인 이미지·PDF 압축 프로그
 
 ### 데스크톱 실행 파일
 
-[최신 버전 다운로드](https://github.com/lgyEthan/image_zipper/releases/latest)에서 OS에 맞는 ZIP을 받아 압축을 풀고 실행하세요. 설치할 Python은 필요 없습니다. 변경 사항은 [변경 기록](CHANGELOG.md)에 정리합니다.
+[최신 버전 다운로드](https://github.com/lgyEthan/pictumi/releases/latest)에서 OS에 맞는 ZIP을 받아 압축을 풀고 실행하세요. 설치할 Python은 필요 없습니다. 변경 사항은 [변경 기록](CHANGELOG.md)에 정리합니다.
 
 | 플랫폼 | 다운로드 ZIP / 실행 파일 | 기준 |
 |---|---|---|
-| Windows x64 | `…Windows-x64.zip` → `ImageZipper/ImageZipper.exe` | Windows 10/11 x64, CI는 Windows Server 2025 |
-| Mac Apple silicon | `…macOS-arm64-notarized.zip` → `ImageZipper.app` | macOS 15 이상, arm64 |
-| Mac Intel | `…macOS-Intel-notarized.zip` → `ImageZipper.app` | macOS 15 이상, x86_64 |
+| Windows x64 | `…Windows-x64.zip` → `Pictumi/Pictumi.exe` | Windows 10/11 x64, CI는 Windows Server 2025 |
+| Mac Apple silicon | `…macOS-arm64-notarized.zip` → `Pictumi.app` | macOS 15 이상, arm64 |
+| Mac Intel | `…macOS-Intel-notarized.zip` → `Pictumi.app` | macOS 15 이상, x86_64 |
 
 폴더 안의 라이브러리까지 함께 있어야 합니다. Mac의 **`-notarized.zip` 배포본은 Developer ID 서명과 Apple 공증을 완료**했고, 공증 티켓을 앱에 포함합니다. ZIP을 다시 푼 앱의 Gatekeeper 허용과 실제 실행을 검사했습니다. Windows 배포본에는 Authenticode 서명이 없습니다.
 
 Apple Developer 계정으로 서명·공증한 배포본을 만드는 절차는 [Mac 배포 안내](docs/macos-distribution.md)에 있습니다.
 
-릴리스에는 앱 ZIP과 SHA-256 체크섬을 제공합니다. 업데이트할 때는 기존 앱을 종료한 뒤 새 ZIP을 별도 폴더에 풀어 실행하세요. 앱의 정보 메뉴와 OS 파일 정보에 버전이 표시됩니다. 개발 중인 빌드는 [GitHub Actions](https://github.com/lgyEthan/image_zipper/actions/workflows/build.yml)에서 받을 수 있습니다.
+릴리스에는 앱 ZIP, SHA-256 체크섬과 해당 버전의 LGPL/MPL 라이브러리 소스 묶음을 제공합니다. 라이선스 원문은 앱의 **도움말 → 오픈소스 라이선스**에서 열 수 있습니다. 업데이트할 때는 기존 앱을 종료한 뒤 새 ZIP을 별도 폴더에 풀어 실행하세요. 앱의 정보 메뉴와 OS 파일 정보에 버전이 표시됩니다. 개발 중인 빌드는 [GitHub Actions](https://github.com/lgyEthan/pictumi/actions/workflows/build.yml)에서 받을 수 있습니다.
 
 ### 소스에서 실행
 
@@ -49,15 +50,17 @@ macOS:
 
 ```bash
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
-python -m image_zipper
+python -m pip install -e '.[dev]' -r requirements-build.txt
+python scripts/build_heif_decoder.py
+python -m pictumi
 ```
 
 Windows PowerShell:
 
 ```powershell
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.venv\Scripts\python.exe -m image_zipper
+.venv\Scripts\python.exe -m pip install -e ".[dev]" -r requirements-build.txt
+.venv\Scripts\python.exe scripts/build_heif_decoder.py
+.venv\Scripts\python.exe -m pictumi
 ```
 
 ## 사용 방법
@@ -146,22 +149,22 @@ Windows PowerShell:
 
 ```bash
 # 150 DPI로 일괄 저장
-image-zipper-cli photos/ -o output/ --dpi 150
+pictumi-cli photos/ -o output/ --dpi 150
 
 # 파일별 최대 2 MiB, 100 mm 인쇄 너비 기준
-image-zipper-cli photos/ -o output/ --mode size --max-mib 2 --print-width-mm 100 --format jpeg
+pictumi-cli photos/ -o output/ --mode size --max-mib 2 --print-width-mm 100 --format jpeg
 
 # 실제 시험 압축으로 예상값만 확인
-image-zipper-cli figure.png --mode size --max-mib 0.5 --estimate
+pictumi-cli figure.png --mode size --max-mib 0.5 --estimate
 
 # 입력 순서대로 하나의 PDF. 최종 PDF 전체가 5 MiB 이하여야 저장
-image-zipper-cli figure1.png figure2.tif paper.pdf -o output/ --merge combined.pdf --mode size --max-mib 5
+pictumi-cli figure1.png figure2.tif paper.pdf -o output/ --merge combined.pdf --mode size --max-mib 5
 
 # 픽셀까지 보존하는 도표 압축
-image-zipper-cli figure.png --mode original --artwork --format png -o output/
+pictumi-cli figure.png --mode original --artwork --format png -o output/
 
 # 부가 메타데이터 삭제
-image-zipper-cli photos/ --dpi 150 --strip-metadata -o output/
+pictumi-cli photos/ --dpi 150 --strip-metadata -o output/
 ```
 
 CLI는 하나라도 실패하면 종료 코드 1을 반환합니다. `--estimate`는 여러 페이지 TIFF와 PDF를 포함해 전체 출력 파일을 계산합니다.

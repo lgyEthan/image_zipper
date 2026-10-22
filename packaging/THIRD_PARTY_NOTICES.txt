@@ -1,0 +1,57 @@
+Pictumi · 픽투미
+Third-party software notices
+
+Pictumi uses the following independently licensed components. Their copyright
+and license texts are preserved in the accompanying third-party-licenses folder.
+The application icon and synthetic codec-check image were created for Pictumi;
+they do not incorporate third-party application icons, logos, or photographs.
+
+Qt 6.12.0 (Core, Gui, Widgets, Network, DBus, Svg, image-format plugins),
+PySide6 6.12.0 and shiboken6 6.12.0: LGPL-3.0, with the applicable Qt exceptions.
+Qt is dynamically linked; no GPL-only Qt modules are used by this application.
+Their third-party components retain the notices collected under their source
+directories. Qt and its contributors do not endorse Pictumi.
+
+pillow-heif 1.8.1: BSD-3-Clause.
+libheif 1.23.6 and libde265 1.1.3: LGPL-3.0-or-later.
+Pictumi's release build compiles these libraries with HEVC decoding enabled and
+GPL encoders disabled. The unmodified current decoder versions are used. The
+Windows binding build configuration is adapted for MSVC; the patch is generated
+by scripts/build_heif_decoder.py. No x265/x264 encoder is shipped.
+
+img2pdf: LGPL-3.0-or-later. pikepdf: MPL-2.0; bundled qpdf: Apache-2.0.
+Pillow: HPND/MIT-CMU and the licenses of its bundled codecs.
+pyjpegli/Jpegli: BSD-3-Clause and bundled-component licenses.
+pyoxipng/OxiPNG: MIT. lxml: BSD-3-Clause and bundled-component licenses.
+pypdfium2: Apache-2.0 or BSD-3-Clause; PDFium: BSD-style and third-party notices.
+Python: PSF license and included third-party notices.
+PyInstaller: GPL-2.0-or-later with its bootloader exception. The exception permits
+applications packaged by PyInstaller to be distributed under other licenses.
+
+Actual installed package versions are listed in versions.txt. The complete
+license terms, rather than this overview, govern each respective component.
+
+Corresponding source
+
+The same release includes Pictumi-v0.1.7-third-party-sources.zip and its SHA-256
+checksum at https://github.com/lgyEthan/pictumi/releases/tag/v0.1.7 . This archive
+contains the exact Qt, PySide6/shiboken6, libheif, libde265, pillow-heif, pikepdf,
+img2pdf and PyInstaller sources, plus Pictumi's codec build and packaging scripts.
+SOURCE_INDEX.txt records the upstream locations and verified SHA-256 hashes.
+The source archive is supplied alongside the executable downloads; it does not
+depend on a later source request or a promise to obtain sources from upstream.
+
+Library replacement
+
+You may modify and replace the LGPL libraries and reverse engineer this
+application for debugging those modifications. No Pictumi license term restricts
+those rights. The folder-based distribution keeps libraries separately loadable.
+See REBUILDING.txt for replacement and rebuild instructions. Replacing signed
+files invalidates the original publisher's signature; users can rebuild and
+ad-hoc sign their own Mac copy without a Developer ID certificate.
+
+Pictumi source and build instructions: https://github.com/lgyEthan/pictumi
+
+These notices do not grant a license to third-party trademarks. Apple and
+Instagram names are used only in discussion of familiar interaction patterns;
+their application artwork and proprietary assets are not distributed here.

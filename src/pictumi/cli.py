@@ -10,7 +10,7 @@ from .service import measure, save_asset, save_merged
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Image Zipper — 오프라인 이미지·PDF 압축")
+    parser = argparse.ArgumentParser(description="Pictumi — 오프라인 이미지·PDF 압축")
     parser.add_argument("files", type=Path, nargs="+", help="이미지, PDF 또는 폴더")
     parser.add_argument("--output", "-o", type=Path, default=Path("compressed"))
     parser.add_argument("--mode", choices=["dpi", "size", "original"], default="dpi")

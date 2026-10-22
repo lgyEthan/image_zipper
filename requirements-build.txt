@@ -1,0 +1,4 @@
+# Tools for the reproducible, encoder-free HEIC wheel.
+cmake==4.1.3
+delocate==0.13.0; sys_platform == "darwin"
+delvewheel==1.12.0; sys_platform == "win32"

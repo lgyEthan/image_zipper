@@ -16,8 +16,8 @@ def main():
     from PySide6.QtCore import QCoreApplication, QEvent, QTimer
     from PySide6.QtWidgets import QApplication
 
-    from image_zipper.app import MainWindow, configure_theme
-    from image_zipper.imaging import probe
+    from pictumi.app import MainWindow, configure_theme
+    from pictumi.imaging import probe
 
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)

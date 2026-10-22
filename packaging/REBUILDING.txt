@@ -1,0 +1,46 @@
+Replacing LGPL libraries in Pictumi
+
+Download the Pictumi source for the corresponding release and the accompanying
+third-party-sources archive. Use Python 3.12 on the target operating system.
+Do not modify your only installed copy; work on a separate copy of the app.
+
+1. Create a Python virtual environment and install the project and build tools:
+   python -m pip install -e ".[dev]" -r requirements-build.txt
+
+2. The codec sources and checksums are in packaging/third-party-sources.toml.
+   scripts/build_heif_decoder.py builds libde265 and libheif as shared libraries,
+   compiles the pillow-heif binding, repairs its wheel and installs it. Libraries
+   can be modified by extracting their sources and applying changes before the
+   CMake build steps in that script. Update source checksums only for your own
+   modified archive. Use scripts/vendor.py to verify the supplied originals.
+   python scripts/build_heif_decoder.py
+
+3. For Qt/PySide6, the supplied qtbase, qtsvg, qtimageformats and pyside-setup
+   archives contain their build instructions. Build ABI-compatible Qt 6.12
+   shared libraries, then PySide6/shiboken6 against that installation. Install
+   your resulting PySide6 wheels into the environment. Qt's own build tools are
+   not part of the application runtime. Use Qt's documented configure/CMake
+   options for the target platform; no Pictumi-specific Qt source patch is used.
+
+4. img2pdf is Python code. Install your modified source into the environment.
+   For pikepdf, install qpdf's development headers and build the supplied pikepdf
+   source using its included build instructions.
+
+5. Rebuild with python scripts/build.py. Without --codesign-identity, the Mac
+   build uses an ad-hoc signature and requires no paid certificate. On Windows,
+   the application and libraries remain in the Pictumi folder. Keep the complete
+   folder together. Local rebuilding places the modified libraries into the
+   executable's Python archive or its external library directories as needed.
+
+For an ABI-compatible shared-library replacement in an existing Mac copy, the
+libraries are under Pictumi.app/Contents/Frameworks. After replacing them, an
+ad-hoc signature can be applied to your copy with:
+   codesign --force --deep --sign - Pictumi.app
+This does not retain the publisher's notarization and does not claim to. On
+Windows, DLLs are under Pictumi/_internal. Rebuilding as above is recommended
+when bindings or library ABI versions also change.
+
+The LGPL texts, copyright notices and exceptions are supplied in the license
+folder. They permit library modification, replacement and the reverse
+engineering needed to debug your modifications. This permission applies even
+where other components have different terms.
