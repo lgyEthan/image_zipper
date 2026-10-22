@@ -67,6 +67,9 @@ a = Analysis(
     hiddenimports=hiddenimports,
     excludes=["tkinter", "PIL.ImageTk"],
 )
+# pip's provenance for a locally rebuilt wheel contains the build-machine path.
+# Runtime version and license metadata are retained; local install URLs are not.
+a.datas = [entry for entry in a.datas if Path(entry[0]).name != "direct_url.json"]
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz,

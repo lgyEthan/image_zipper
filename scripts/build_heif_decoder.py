@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -71,6 +72,9 @@ def main():
         )
         run(cmake, "--install", binary, "--config", "Release")
     source = extract_source("pillow-heif", work / "pillow-heif/source")
+    # setup.py may otherwise reuse objects compiled with an earlier configuration.
+    if (source / "build").exists():
+        shutil.rmtree(source / "build")
     if sys.platform == "win32":
         # Upstream assumes MSYS2 on Windows. Our libraries use MSVC, like CPython;
         # compile the unmodified C binding against that same toolchain instead.
@@ -95,6 +99,18 @@ def main():
             shutil.rmtree(directory)
         directory.mkdir()
     env = dict(os.environ, LIBHEIF_ROOT=str(prefix), MACOSX_DEPLOYMENT_TARGET="15.0")
+    if sys.platform == "darwin":
+        env["CFLAGS"] = " ".join(
+            [
+                env.get("CFLAGS", ""),
+                "-g0",
+                shlex.quote(f"-ffile-prefix-map={ROOT}=."),
+                shlex.quote(f"-fdebug-prefix-map={ROOT}=."),
+            ]
+        )
+    elif sys.platform == "win32":
+        env["CL"] = env.get("CL", "") + f' /pathmap:"{ROOT}=."'
+        env["LINK"] = env.get("LINK", "") + " /PDBALTPATH:%_PDB%"
     run(sys.executable, "-I", "-m", "pip", "wheel", "--no-deps", "-w", wheels, source, env=env)
     wheel = next(wheels.glob("*.whl"))
     if sys.platform == "darwin":
