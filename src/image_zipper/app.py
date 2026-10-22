@@ -4,6 +4,7 @@ import multiprocessing
 import sys
 import tempfile
 from collections import OrderedDict
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QEvent, QSize, Qt, QTimer, QUrl
@@ -21,8 +22,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -37,7 +37,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QSplitter,
     QStackedWidget,
     QTableWidgetItem,
@@ -46,6 +45,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__
+from .controls import SettingComboBox, SettingDoubleSpinBox, SettingSpinBox
 from .file_table import FileTable
 from .imaging import INPUT_EXTENSIONS, quick_estimate
 from .models import Asset, CompressionError, Settings, human_bytes
@@ -59,22 +59,6 @@ def label(text: str, name: str = "", wrap: bool = False) -> QLabel:
     widget.setObjectName(name)
     widget.setWordWrap(wrap)
     return widget
-
-
-class SettingComboBox(QComboBox):
-    def wheelEvent(self, event):
-        # Leave wheel/trackpad gestures to the surrounding settings scroll area.
-        event.ignore()
-
-
-class SettingSpinBox(QSpinBox):
-    def wheelEvent(self, event):
-        event.ignore()
-
-
-class SettingDoubleSpinBox(QDoubleSpinBox):
-    def wheelEvent(self, event):
-        event.ignore()
 
 
 def app_icon() -> QIcon:
@@ -273,6 +257,12 @@ class MainWindow(QMainWindow):
         advanced_layout.setContentsMargins(0, 0, 0, 0)
         advanced_layout.setSpacing(10)
         advanced_layout.addWidget(self.artwork)
+        self.strip_metadata = QCheckBox("메타데이터 삭제")
+        self.strip_metadata.setToolTip(
+            "촬영일·위치·작성자 등의 부가 정보를 삭제합니다. 색상·방향·DPI는 유지합니다. "
+            "PDF는 문서 속성과 XMP를 삭제하며 본문·주석·첨부파일은 유지합니다."
+        )
+        advanced_layout.addWidget(self.strip_metadata)
         self.print_width = SettingDoubleSpinBox()
         self.print_width.setRange(0, 10000)
         self.print_width.setSpecialValueText("원본 기준")
@@ -403,10 +393,13 @@ class MainWindow(QMainWindow):
         self.measure_button = QPushButton("결과 확인")
         self.measure_button.setEnabled(False)
         self.measure_button.setToolTip("시험 압축으로 최종 파일 크기와 DPI를 확인합니다.")
+        self.edit_button = QPushButton("편집")
+        self.edit_button.setEnabled(False)
         metrics.addWidget(self.estimate_title)
         metrics.addStretch()
         metrics.addWidget(self.metric_label)
         metrics.addSpacing(8)
+        metrics.addWidget(self.edit_button)
         metrics.addWidget(self.measure_button)
         inspection.addLayout(metrics)
         self.estimate_detail = label("", "muted", True)
@@ -416,10 +409,14 @@ class MainWindow(QMainWindow):
         previews = QHBoxLayout()
         previews.setSpacing(12)
         self.before, self.after = Preview("원본"), Preview("압축 후")
-        for title, view in (("원본", self.before), ("압축 결과", self.after)):
+        self.before_title = label("원본", "caption")
+        for title, view in (
+            (self.before_title, self.before),
+            (label("압축 결과", "caption"), self.after),
+        ):
             layout = QVBoxLayout()
             layout.setSpacing(4)
-            layout.addWidget(label(title, "caption"))
+            layout.addWidget(title)
             layout.addWidget(view, 1)
             previews.addLayout(layout, 1)
         inspection.addLayout(previews, 1)
@@ -513,9 +510,12 @@ class MainWindow(QMainWindow):
         ):
             widget.valueChanged.connect(self._settings_changed)
         self.artwork.toggled.connect(self._settings_changed)
+        self.strip_metadata.toggled.connect(self._settings_changed)
         self.export_button.clicked.connect(self._export)
         self.cancel_button.clicked.connect(self._cancel_export)
         self.measure_button.clicked.connect(self._start_estimate)
+        self.edit_button.clicked.connect(self._open_editor)
+        self.table.cellDoubleClicked.connect(lambda *_: self._open_editor())
 
     def settings(self) -> Settings:
         settings = Settings(
@@ -531,6 +531,7 @@ class MainWindow(QMainWindow):
             reference_dpi=self.reference.value(),
             print_width_mm=self.print_width.value() or None,
             jpeg_engine=self.jpeg_engine.currentData(),
+            strip_metadata=self.strip_metadata.isChecked(),
         )
         settings.validate()
         return settings
@@ -586,11 +587,20 @@ class MainWindow(QMainWindow):
             if self.table.item(row, 5).text() in {"계산 완료", "용량 미달"}:
                 self.table.item(row, 5).setText("대기")
         asset = self.selected_asset()
+        self.edit_button.setEnabled(
+            self._editable(asset) and not self.loaders and not self.exporter
+        )
+        self.edit_button.setToolTip(
+            "선택한 사진을 편집합니다. 원본 파일은 유지됩니다."
+            if self._editable(asset)
+            else "편집은 단일 8비트 이미지에서 사용할 수 있습니다. PDF·다중 페이지·고비트 이미지는 압축만 지원합니다."
+        )
+        self.before_title.setText("편집한 이미지" if asset and asset.edits.active else "원본")
         self.inspector.setVisible(asset is not None)
         self.measure_button.setEnabled(asset is not None and not self.loaders and not self.exporter)
         if asset != self.preview_asset:
             self.preview_asset = asset
-            self.before.clear_image("원본 미리보기 준비 중" if asset else "원본")
+            self.before.clear_image("미리보기 준비 중" if asset else "원본")
             if self.previewer:
                 self.previewer.cancel.set()
             if asset in self.preview_cache:
@@ -627,6 +637,12 @@ class MainWindow(QMainWindow):
             self.estimate_note.setText(
                 reference
                 + (
+                    " · 편집에서 지정한 픽셀 크기 적용"
+                    if not merge and asset.edits.width is not None
+                    else ""
+                )
+                + (" · 모자이크 보호를 위해 메타데이터 삭제" if asset.edits.mosaics else "")
+                + (
                     " · 여러 페이지 중 첫 페이지의 빠른 추정"
                     if not merge and asset.frames > 1 and not asset.is_pdf
                     else ""
@@ -643,6 +659,49 @@ class MainWindow(QMainWindow):
             if 0 <= row < len(self.assets)
             else (self.assets[0] if self.assets else None)
         )
+
+    @staticmethod
+    def _editable(asset):
+        return bool(
+            asset
+            and not asset.is_pdf
+            and asset.frames == 1
+            and asset.color_mode in {"RGB", "RGBA", "L", "LA", "CMYK", "P", "1"}
+        )
+
+    def _open_editor(self):
+        asset = self.selected_asset()
+        if not self._editable(asset) or self.exporter or self.loaders:
+            return
+        from .editor import EditorDialog
+
+        self.debounce.stop()
+        if self.previewer:
+            self.previewer.cancel.set()
+        if self.estimator:
+            self.estimator.cancel.set()
+        if self.sampler:
+            self.sampler.cancel.set()
+        preview = self.preview_cache.get(asset) if not asset.edits.active else None
+        dialog = EditorDialog(asset, self, preview_data=preview)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_edits(asset, dialog.edits)
+        dialog.deleteLater()
+        self.debounce.start()
+
+    def _apply_edits(self, asset, edits):
+        if asset not in self.assets or edits == asset.edits:
+            return
+        edits.validate()
+        row = self.assets.index(asset)
+        changed = replace(asset, edits=edits)
+        self.assets[row] = changed
+        self.trial_cache = None
+        self.preview_cache.pop(asset, None)
+        self.sample_cache.pop(asset, None)
+        self.table.item(row, 2).setText(" × ".join(str(v) for v in changed.pixel_size))
+        self.table.item(row, 5).setText("편집됨" if edits.active else "대기")
+        self._settings_changed()
 
     def _start_preview(self):
         if self.closing or self.exporter or self.loaders:
@@ -823,6 +882,7 @@ class MainWindow(QMainWindow):
         if self.previewer:
             self.previewer.cancel.set()
         self.measure_button.setEnabled(False)
+        self.edit_button.setEnabled(False)
         loader.loaded.connect(self._asset_loaded)
         loader.failed.connect(self._log_error)
         loader.finished.connect(lambda: self._loader_finished(loader))
@@ -982,6 +1042,7 @@ class MainWindow(QMainWindow):
         self.cancel_button.setVisible(active)
         self.progress.setVisible(active)
         self.measure_button.setEnabled(not active and bool(self.assets))
+        self.edit_button.setEnabled(not active and self._editable(self.selected_asset()))
 
     def _progress(self, index, total, name):
         self.progress.setRange(0, total)

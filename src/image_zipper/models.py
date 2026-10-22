@@ -5,6 +5,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Event
 
+from .edits import ImageEdits, edited_size, rotation_layout
+
 
 class CompressionError(Exception):
     """A recoverable error that can be displayed to the user."""
@@ -31,6 +33,7 @@ class Settings:
     reference_dpi: float = 300
     print_width_mm: float | None = None
     jpeg_engine: str = "jpegli"
+    strip_metadata: bool = False
 
     def validate(self) -> None:
         if self.mode not in {"dpi", "size", "original"}:
@@ -73,18 +76,28 @@ class Asset:
     color_mode: str = ""
     page_sizes: tuple[tuple[float, float], ...] = ()
     orientation: int = 1
+    edits: ImageEdits = field(default_factory=ImageEdits)
 
     @property
     def is_pdf(self) -> bool:
         return self.format == "PDF"
 
+    @property
+    def pixel_size(self) -> tuple[int, int]:
+        return edited_size((self.width, self.height), self.edits)
+
     def inches(self, settings: Settings) -> tuple[float, float]:
         if settings.print_width_mm is not None:
             width = settings.print_width_mm / 25.4
-            return width, width * self.height / max(1, self.width)
+            w, h = self.pixel_size
+            return width, width * h / max(1, w)
+        _, (x0, y0, x1, y1) = rotation_layout((self.width, self.height), self.edits)
+        dx, dy = self.dpi_x or settings.reference_dpi, self.dpi_y or settings.reference_dpi
+        if self.edits.turns % 2:
+            dx, dy = dy, dx
         return (
-            self.width / (self.dpi_x or settings.reference_dpi),
-            self.height / (self.dpi_y or settings.reference_dpi),
+            (x1 - x0) / dx,
+            (y1 - y0) / dy,
         )
 
 
@@ -119,7 +132,7 @@ class SavedResult:
 
 def source_fingerprints(assets: list[Asset]) -> tuple:
     return tuple(
-        (str(asset.path), stat.st_size, stat.st_mtime_ns, stat.st_ino)
+        (str(asset.path), stat.st_size, stat.st_mtime_ns, stat.st_ino, asset.edits)
         for asset in assets
         for stat in (asset.path.stat(),)
     )

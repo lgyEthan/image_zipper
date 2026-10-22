@@ -62,6 +62,7 @@ def run(report_path: Path | None = None) -> int:
         from PySide6.QtWidgets import QApplication
 
         from .app import MainWindow, configure_theme
+        from .editor import EditorDialog
 
         app = QApplication.instance() or QApplication([])
         configure_theme(app)
@@ -88,6 +89,22 @@ def run(report_path: Path | None = None) -> int:
                 raise RuntimeError("Loading unexpectedly started trial compression")
             wait_for(lambda: not window.before.source.isNull())
             record("GUI_preview_process")
+            asset = window.assets[0]
+            editor = EditorDialog(asset, window, preview_data=window.preview_cache.get(asset))
+            editor.show()
+            wait_for(lambda: editor.source is not None)
+            editor._mosaic(((0.2, 0.2), (0.6, 0.2), (0.6, 0.6), (0.2, 0.6)))
+            editor._rotate(1)
+            editor.angle.setValue(8.5)
+            editor.width.setValue(240)
+            editor.undo()
+            editor.redo()
+            editor.accept()
+            if editor.result() != 1 or not editor.edits.mosaics or editor.edits.width != 240:
+                raise RuntimeError("Image editor apply/undo/redo failed")
+            window._apply_edits(asset, editor.edits)
+            editor.deleteLater()
+            record("GUI_editor")
             window.mode.setCurrentIndex(window.mode.findData("size"))
             window.format.setCurrentIndex(window.format.findData("jpeg"))
             window.max_mib.setValue(0.008)
@@ -102,6 +119,8 @@ def run(report_path: Path | None = None) -> int:
             outputs = list((root / "output").glob("*.jpg"))
             if len(outputs) != 1 or outputs[0].stat().st_size > 8000:
                 raise RuntimeError("GUI export failed its byte budget")
+            if len(list((root / "output").iterdir())) != 1:
+                raise RuntimeError("Export produced an unexpected sidecar file")
             record("GUI_export_process")
             wait_for(lambda: window.previewer is None and window.sampler is None)
         window.close()

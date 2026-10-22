@@ -25,6 +25,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reference-dpi", type=float, default=300)
     parser.add_argument("--print-width-mm", type=float)
     parser.add_argument("--jpeg-engine", choices=["jpegli", "pillow"], default="jpegli")
+    parser.add_argument(
+        "--strip-metadata",
+        action="store_true",
+        help="촬영·문서 부가 정보 삭제 (색상·방향·DPI 유지)",
+    )
     parser.add_argument("--merge", metavar="NAME.pdf", help="선택한 순서로 PDF 병합")
     parser.add_argument(
         "--estimate", action="store_true", help="실제 시험 압축으로 용량과 DPI만 출력"
@@ -41,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
         reference_dpi=args.reference_dpi,
         print_width_mm=args.print_width_mm,
         jpeg_engine=args.jpeg_engine,
+        strip_metadata=args.strip_metadata,
     )
     results, errors, assets = [], [], []
     try:

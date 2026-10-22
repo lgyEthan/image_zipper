@@ -97,6 +97,111 @@ def dispose(window, app):
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
+def test_editor_drag_rotate_resize_undo_and_cancel(png, app):
+    from image_zipper.editor import EditorDialog
+    from image_zipper.edits import ImageEdits
+    from image_zipper.imaging import preview_source
+
+    asset = probe(png)
+    before = png.read_bytes()
+    dialog = EditorDialog(asset, preview_data=preview_source(asset)[0])
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.crop.isChecked()
+        assert dialog.apply_button.isEnabled()
+        assert dialog.windowFlags() & Qt.WindowType.WindowCloseButtonHint
+        assert not dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+        box = dialog.canvas.image_rect()
+        start = QPoint(round(box.left() + box.width() * 0.2), round(box.top() + box.height() * 0.2))
+        end = QPoint(round(box.left() + box.width() * 0.6), round(box.top() + box.height() * 0.6))
+        QTest.mousePress(dialog.canvas, Qt.MouseButton.LeftButton, pos=start)
+        QTest.mouseMove(dialog.canvas, end)
+        QTest.mouseRelease(dialog.canvas, Qt.MouseButton.LeftButton, pos=end)
+        assert len(dialog.edits.mosaics) == 1
+        QTest.mouseClick(dialog.tools[2], Qt.MouseButton.LeftButton)
+        QTest.mouseClick(dialog.right, Qt.MouseButton.LeftButton)
+        assert dialog.edits.turns == 3
+        assert (dialog.width.value(), dialog.height.value()) == (480, 720)
+        dialog.angle.setValue(12.5)
+        assert dialog.edits.angle == 12.5
+        dialog.undo()
+        assert dialog.edits.angle == 0
+        dialog.redo()
+        assert dialog.edits.angle == 12.5
+        QTest.mouseClick(dialog.tools[1], Qt.MouseButton.LeftButton)
+        dialog.width.setValue(200)
+        assert dialog.edits.width == 200
+        assert dialog.edits.height == dialog.height.value()
+        dialog._render()
+        assert not dialog.canvas.pixmap.isNull() and dialog.apply_button.isEnabled()
+        dialog.reject()
+        assert dialog.result() == 0
+        assert asset.edits == ImageEdits()
+        assert png.read_bytes() == before
+        assert dialog.source is None
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_editor_settings_ignore_wheel_and_apply_updates_only_selected_file(png, tmp_path, app):
+    from image_zipper.editor import EditorDialog
+    from image_zipper.imaging import preview_source
+
+    second = tmp_path / "second.png"
+    second.write_bytes(png.read_bytes())
+    window = MainWindow()
+    dialog = EditorDialog(probe(png), preview_data=preview_source(probe(png))[0])
+    try:
+        window._asset_loaded(probe(png))
+        window._asset_loaded(probe(second))
+        window.table.selectRow(0)
+        dialog.show()
+        for index, widgets in (
+            (0, (dialog.strength,)),
+            (1, (dialog.width, dialog.height)),
+            (2, (dialog.angle, dialog.angle_slider)),
+        ):
+            dialog._tool(index)
+            app.processEvents()
+            for widget in widgets:
+                value = widget.value()
+                position = widget.mapTo(dialog, widget.rect().center())
+                QTest.wheelEvent(dialog.windowHandle(), position, QPoint(0, -120))
+                assert widget.value() == value
+        dialog._tool(1)
+        dialog.width.setValue(360)
+        dialog.accept()
+        assert dialog.result() == 1
+        window._apply_edits(window.assets[0], dialog.edits)
+        assert window.assets[0].pixel_size == (360, 240)
+        assert not window.assets[1].edits.active
+        assert window.before_title.text() == "편집한 이미지"
+        assert window.table.item(0, 5).text() == "편집됨"
+        assert not window.settings().strip_metadata
+        window.strip_metadata.setChecked(True)
+        assert window.settings().strip_metadata
+        assert window.trial_cache is None
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        dispose(window, app)
+
+
+def test_editor_can_close_while_preview_process_is_starting(png, app):
+    from image_zipper.editor import EditorDialog
+
+    dialog = EditorDialog(probe(png))
+    dialog.show()
+    dialog.reject()
+    spin(app, lambda: dialog.worker is None)
+    assert not dialog.isVisible()
+    dialog.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 def test_native_window_controls_and_simple_default_settings(app):
     window = MainWindow()
     try:
@@ -191,7 +296,14 @@ def test_settings_still_accept_keyboard_and_explicit_menu_selection(app):
         # Qt briefly suppresses releases after opening a combo popup.
         QTest.qWait(app.doubleClickInterval() + 20)
         index = window.preset.model().index(2, 0)
-        QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=view.visualRect(index).center())
+        QTest.mouseMove(view.viewport(), view.visualRect(index).center())
+        QTest.mouseClick(
+            view.viewport(),
+            Qt.MouseButton.LeftButton,
+            pos=view.visualRect(index).center(),
+            delay=20,
+        )
+        app.processEvents()
         assert window.preset.currentText() == "균형"
         assert window.dpi.value() == 150
     finally:

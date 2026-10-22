@@ -6,6 +6,7 @@ import os
 import struct
 import warnings
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from threading import Event, RLock
 
@@ -15,6 +16,7 @@ import pyjpegli
 from PIL import Image, ImageFile, ImageOps, PngImagePlugin, TiffImagePlugin, UnidentifiedImageError
 
 from .budget import fit_quality, fit_scale
+from .edits import apply_edits
 from .models import Asset, CompressionError, Encoded, Settings, check_cancel
 
 pillow_heif.register_heif_opener(thumbnails=False)
@@ -167,6 +169,15 @@ def load_image(asset: Asset, frame: int = 0) -> tuple[Image.Image, list[str]]:
                 }
     if im.mode == "P":
         im = im.convert("RGBA" if asset.has_alpha else "RGB")
+    if asset.edits.active:
+        edited = apply_edits(im, asset.edits)
+        if edited is not im:
+            im.close()
+            im = edited
+        if asset.edits.mosaics:
+            notes.append(
+                "모자이크 원본 미리보기가 남지 않도록 촬영·위치 등 부가 메타데이터를 삭제했습니다."
+            )
     if asset.format in {"HEIF", "HEIC", "AVIF"}:
         # Pillow's public pipeline is 8-bit; never imply HDR preservation.
         notes.append(
@@ -184,6 +195,8 @@ def select_format(asset: Asset, settings: Settings) -> str:
         return settings.output_format
     if asset.format == "TIFF":
         return "tiff"
+    if asset.edits.angle and not asset.edits.crop:
+        return "png"
     if asset.format == "WEBP":
         return "webp"
     if settings.content == "artwork" or asset.has_alpha:
@@ -318,17 +331,19 @@ def encode_pixels(
         if settings.jpeg_engine == "jpegli" and im.mode not in {"CMYK", "L", "1"}:
             rgb = im.convert("RGB")
             data = pyjpegli.encode(rgb.tobytes(), rgb.width, rgb.height, quality=quality)
-            return jpeg_metadata(data, dpi, icc, im)
+            return jpeg_metadata(data, dpi, icc, None if settings.strip_metadata else im)
     stream = io.BytesIO()
     kwargs = {"icc_profile": icc} if icc else {}
     if fmt in {"jpeg", "webp", "avif", "png"}:
-        kwargs["exif"] = _exif(dpi, im)
-    if im.info.get("xmp") and fmt in {"jpeg", "webp", "avif"}:
-        kwargs["xmp"] = im.info["xmp"]
+        kwargs["exif"] = _exif(dpi, None if settings.strip_metadata else im)
+    if fmt in {"jpeg", "webp", "avif"}:
+        kwargs["xmp"] = b"" if settings.strip_metadata else im.info.get("xmp", b"")
     if fmt == "jpeg":
         im = im.convert("L" if im.mode in {"1", "L"} else "RGB")
         kwargs.update(quality=quality, optimize=True, progressive=False, subsampling=0, dpi=dpi)
-        extra = im.info.get("_jpeg_extra", ())
+        extra = () if settings.strip_metadata else im.info.get("_jpeg_extra", ())
+        if settings.strip_metadata:
+            kwargs["comment"] = b""
         kwargs["extra"] = b"".join(
             b"\xff"
             + (b"\xed" if name == "APP13" else b"\xfe")
@@ -338,12 +353,14 @@ def encode_pixels(
         )
     elif fmt == "png":
         metadata = PngImagePlugin.PngInfo()
-        for name, value in im.info.get("_png_text", {}).items():
+        for name, value in (
+            {} if settings.strip_metadata else im.info.get("_png_text", {})
+        ).items():
             if isinstance(value, PngImagePlugin.iTXt):
                 metadata.add_itxt(name, value, value.lang, value.tkey)
             else:
                 metadata.add_text(name, value)
-        if im.info.get("xmp"):
+        if im.info.get("xmp") and not settings.strip_metadata:
             metadata.add_itxt("XML:com.adobe.xmp", im.info["xmp"].decode("utf-8"))
         for name, value in (("gamma", "gAMA"), ("srgb", "sRGB"), ("chromaticity", "cHRM")):
             if name not in im.info or (icc and name == "srgb"):
@@ -368,7 +385,7 @@ def encode_pixels(
             quality = 100
         kwargs.update(quality=quality, speed=6, subsampling="4:4:4", max_threads=2)
     elif fmt == "tiff":
-        kwargs["tiffinfo"] = im.info.get("_tiff_tags", {})
+        kwargs["tiffinfo"] = {} if settings.strip_metadata else im.info.get("_tiff_tags", {})
         kwargs.update(compression="group4" if im.mode == "1" else "tiff_adobe_deflate", dpi=dpi)
     if fmt == "jpeg":
         # Pillow underestimates the optimized 4:4:4 buffer for detailed photos.
@@ -393,6 +410,11 @@ def encode_pixels(
 def compress_image(asset: Asset, settings: Settings, cancel: Event | None = None) -> Encoded:
     settings.validate()
     check_cancel(cancel)
+    if asset.edits.active and asset.frames > 1:
+        raise CompressionError("편집은 단일 이미지에만 적용할 수 있습니다.")
+    if asset.edits.mosaics:
+        # Camera maker notes / XMP can embed an unredacted original thumbnail.
+        settings = replace(settings, strip_metadata=True)
     if asset.frames > 1:
         if asset.format != "TIFF":
             raise CompressionError(
@@ -409,6 +431,8 @@ def _compress_multipage_tiff(asset: Asset, settings: Settings, cancel) -> Encode
         )
     if (
         settings.mode == "size"
+        and not settings.strip_metadata
+        and not asset.edits.active
         and asset.size_bytes <= settings.max_bytes
         and settings.print_width_mm is None
     ):
@@ -493,6 +517,8 @@ def _compress_image_frame(asset: Asset, settings: Settings, cancel: Event | None
     }.get(asset.format)
     if (
         settings.mode == "size"
+        and not settings.strip_metadata
+        and not asset.edits.active
         and asset.size_bytes <= settings.max_bytes
         and asset.frames == 1
         and original_format == fmt
@@ -523,7 +549,7 @@ def _compress_image_frame(asset: Asset, settings: Settings, cancel: Event | None
             )
         inches = asset.inches(settings)
         max_scale = 1.0
-        if settings.mode == "dpi":
+        if settings.mode == "dpi" and asset.edits.width is None:
             max_scale = min(
                 1.0,
                 settings.target_dpi * inches[0] / im.width,
@@ -568,6 +594,8 @@ def _compress_image_frame(asset: Asset, settings: Settings, cancel: Event | None
         )
         if (
             asset.frames == 1
+            and not settings.strip_metadata
+            and not asset.edits.active
             and asset.orientation == 1
             and original_format == fmt
             and (result.width, result.height) == (asset.width, asset.height)
@@ -622,7 +650,11 @@ def _compress_image_frame(asset: Asset, settings: Settings, cancel: Event | None
             result.warnings.append(
                 "출력 해상도가 300 DPI 미만입니다. 인쇄 크기와 제출 기준을 확인하세요."
             )
-        if settings.mode == "dpi" and min(result.dpi_x, result.dpi_y) + 1 < settings.target_dpi:
+        if (
+            settings.mode == "dpi"
+            and asset.edits.width is None
+            and min(result.dpi_x, result.dpi_y) + 1 < settings.target_dpi
+        ):
             result.warnings.append(
                 "원본 해상도가 낮아 목표 DPI에 미달합니다. 확대 보간은 하지 않았습니다."
             )
@@ -647,16 +679,18 @@ def quick_estimate(asset: Asset, settings: Settings) -> tuple[float | None, int,
             "PDF 내부 이미지 분석 필요",
         )
     width_in, height_in = asset.inches(settings)
-    dpi = min(asset.width / width_in, asset.height / height_in)
-    if settings.mode == "dpi":
+    width, height = asset.pixel_size
+    dpi = min(width / width_in, height / height_in)
+    estimated_bytes = asset.size_bytes * width * height / max(1, asset.width * asset.height)
+    if settings.mode == "dpi" and asset.edits.width is None:
         ratio = min(1.0, settings.target_dpi / dpi)
     elif settings.mode == "size":
-        ratio = min(1.0, math.sqrt(settings.max_bytes / max(1, asset.size_bytes)))
+        ratio = min(1.0, math.sqrt(settings.max_bytes / max(1, estimated_bytes)))
     else:
         ratio = 1.0
     return (
         dpi * ratio,
-        int(asset.size_bytes * ratio * ratio),
+        int(estimated_bytes * ratio * ratio),
         "빠른 추정 · 원본 용량 기준",
     )
 
@@ -665,6 +699,16 @@ def preview_source(asset: Asset, edge: int = 900) -> tuple[bytes, bytes]:
     """One deferred decode supplies a thumbnail and small full-detail sample tiles."""
     if asset.is_pdf:
         return thumbnail(asset, edge), b""
+    if asset.edits.active:
+        im, _ = load_image(asset)
+        try:
+            im.thumbnail((edge, edge), Image.Resampling.LANCZOS, reducing_gap=2.0)
+            stream = io.BytesIO()
+            im.convert("RGBA" if "A" in im.getbands() else "RGB").save(stream, "PNG")
+            # A scaled preview is not a full-detail compression sample.
+            return stream.getvalue(), b""
+        finally:
+            im.close()
     with Image.open(asset.path) as source:
         source.load()
         sample_data = b""
@@ -701,6 +745,8 @@ def sample_estimate(asset: Asset, settings: Settings, sample: bytes, cancel=None
     fmt = select_format(asset, settings)
     if (
         fmt == asset.format.lower().replace("jpg", "jpeg")
+        and not settings.strip_metadata
+        and not asset.edits.active
         and asset.size_bytes <= settings.max_bytes
     ):
         dpi = min(asset.width / asset.inches(settings)[0], asset.height / asset.inches(settings)[1])
@@ -740,6 +786,8 @@ def thumbnail(asset: Asset, edge: int = 1000) -> bytes:
         from .pdf import render_preview
 
         return render_preview(asset.path, edge=edge)
+    if asset.edits.active:
+        return preview_source(asset, edge)[0]
     with Image.open(asset.path) as source:
         # Pillow uses JPEG draft/shrink-on-load before decoding. Transpose only
         # the thumbnail, avoiding two full-resolution copies of the original.

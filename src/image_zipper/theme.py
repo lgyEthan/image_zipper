@@ -69,6 +69,7 @@ def configure_theme(app: QApplication, dark: bool | None = None) -> None:
     QLabel { background: transparent; }
     QLabel#muted, QLabel#caption { color: @muted; }
     QLabel#caption { font-size: 11px; }
+    QDialog#imageEditor QLabel#caption { font-size: 12px; }
     QLabel#section { font-size: 12px; font-weight: 600; color: @muted; }
     QLabel#heading { font-size: 18px; font-weight: 600; }
     QLabel#metric { font-size: 16px; font-weight: 600; }
@@ -81,6 +82,7 @@ def configure_theme(app: QApplication, dark: bool | None = None) -> None:
     QPushButton { background: @control; border: 1px solid @line; border-radius: 6px; padding: 5px 12px; min-height: 20px; }
     QPushButton:hover { background: @hover; }
     QPushButton:pressed { background: @selection; }
+    QPushButton:checked { background: @selection; color: @selected; border-color: @line; }
     QPushButton:disabled { color: @disabled; background: @group; border-color: @line; }
     QPushButton#primary { background: @blue; color: white; border: 1px solid @blue; padding: 6px 22px; font-weight: 600; }
     QPushButton#primary:hover { background: #0759bc; }

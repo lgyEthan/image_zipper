@@ -158,15 +158,42 @@ def placements(pdf: Pdf, cancel: Event | None = None) -> tuple[dict, list[str], 
     return found, list(dict.fromkeys(notes)), protected
 
 
-def _save(pdf: Pdf, *, recompress: bool = True) -> bytes:
+def _save(pdf: Pdf, *, recompress: bool = True, strip_metadata: bool = False) -> bytes:
     stream = io.BytesIO()
     pdf.save(
         stream,
         compress_streams=True,
         recompress_flate=recompress,
         object_stream_mode=pikepdf.ObjectStreamMode.generate,
+        fix_metadata_version=not strip_metadata,
     )
     return stream.getvalue()
+
+
+def _without_document_metadata(data: bytes, cancel) -> bytes:
+    with open_pdf(data) as pdf:
+        _check_signatures(pdf)
+        if "/Info" in pdf.trailer:
+            del pdf.docinfo
+        if "/ID" in pdf.trailer:
+            del pdf.trailer["/ID"]
+        pending, visited = [pdf.Root], set()
+        while pending:
+            check_cancel(cancel)
+            obj = pending.pop()
+            if not isinstance(obj, (Dictionary, pikepdf.Stream, Array)):
+                continue
+            if obj.is_indirect:
+                if obj.objgen in visited:
+                    continue
+                visited.add(obj.objgen)
+            if isinstance(obj, Array):
+                pending.extend(obj)
+            else:
+                if "/Metadata" in obj:
+                    del obj["/Metadata"]
+                pending.extend(value for _, value in obj.items())
+        return _save(pdf, recompress=False, strip_metadata=True)
 
 
 def _eligible(obj: pikepdf.Object) -> bool:
@@ -345,7 +372,7 @@ def _pdf_candidate(
         check_cancel(cancel)
         # Re-deflating every existing stream on each trial buys little and can
         # dominate image fitting. Newly written raw streams are still compressed.
-        data = _save(pdf, recompress=False)
+        data = _save(pdf, recompress=False, strip_metadata=settings.strip_metadata)
         if not changed and len(data) > len(source):
             data = source
         if skipped:
@@ -381,6 +408,8 @@ def _pdf_candidate(
 def compress_pdf(source: Path | bytes, settings: Settings, cancel: Event | None = None) -> Encoded:
     settings.validate()
     data = source if isinstance(source, bytes) else source.read_bytes()
+    if settings.strip_metadata:
+        data = _without_document_metadata(data, cancel)
     if settings.mode != "size":
         dpi = settings.target_dpi if settings.mode == "dpi" else None
         return _pdf_candidate(data, settings, dpi, settings.quality, cancel)
@@ -513,6 +542,8 @@ def merge_pdf(
                 raise CompressionError(
                     "움직임이나 보조 이미지를 잃지 않도록 이 다중 프레임 파일의 PDF 병합을 중단했습니다."
                 )
+            if asset.frames > 1 and asset.edits.active:
+                raise CompressionError("편집은 단일 이미지에만 적용할 수 있습니다.")
             for frame in range(asset.frames):
                 check_cancel(cancel)
                 current = image_asset(asset.path, frame) if frame else asset
