@@ -86,6 +86,10 @@ def check_bundle(root: Path) -> list[str]:
             if kind == "personal home path" and ({"Frameworks", "_internal"} & set(relative.parts)):
                 # Official Qt and wheel binaries carry their public CI build roots.
                 build_users = {b"qt", b"runner", b"runneradmin"}
+                if {"Python.framework", "python3__dot__12"} & set(relative.parts):
+                    # The official python.org macOS framework embeds this build
+                    # account in its native modules, on both architectures.
+                    build_users.add(b"sysadmin")
                 matches = PATTERNS[kind].findall(data)
                 if all(
                     re.split(rb"[\\/]+", match.rstrip(b"/\\"))[-1] in build_users
