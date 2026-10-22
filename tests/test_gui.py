@@ -7,9 +7,10 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QColor, QPalette  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import QApplication, QScrollArea  # noqa: E402
 
 from image_zipper.app import MainWindow, configure_theme  # noqa: E402
 from image_zipper.imaging import probe  # noqa: E402
@@ -99,6 +100,8 @@ def dispose(window, app):
 def test_native_window_controls_and_simple_default_settings(app):
     window = MainWindow()
     try:
+        window.show()
+        app.processEvents()
         flags = window.windowFlags()
         for flag in (
             Qt.WindowType.WindowTitleHint,
@@ -110,7 +113,87 @@ def test_native_window_controls_and_simple_default_settings(app):
         assert not flags & Qt.WindowType.FramelessWindowHint
         assert window.advanced_panel.isHidden()
         assert window.artwork.parent() == window.advanced_panel
+        assert not window.format.isVisible()
+        assert window.preset.currentText() == "균형"
+        assert window.dpi.isVisible() and window.preset.isVisible()
+        settings = window.settings()
+        assert (settings.target_dpi, settings.quality, settings.min_quality) == (150, 86, 76)
+        assert settings.output_format == "auto" and settings.jpeg_engine == "jpegli"
+        QTest.mouseClick(window.advanced_toggle, Qt.MouseButton.LeftButton)
+        assert window.format.isVisible() and window.quality.isVisible()
+        QTest.mouseClick(window.advanced_toggle, Qt.MouseButton.LeftButton)
+        assert not window.format.isVisible()
+        assert window.settings() == settings
         assert window.measure_button.text() == "결과 확인"
+    finally:
+        dispose(window, app)
+
+
+@pytest.mark.parametrize("focused", [False, True])
+@pytest.mark.parametrize("trackpad", [False, True])
+def test_settings_wheel_scrolls_sidebar_without_changing_values(app, focused, trackpad):
+    window = MainWindow()
+    try:
+        window.resize(1040, 700)
+        window.advanced_toggle.setChecked(True)
+        window.show()
+        app.processEvents()
+        scroll = window.settings_card.findChild(QScrollArea)
+        bar = scroll.verticalScrollBar()
+        assert bar.maximum() > 0
+        for mode in ("dpi", "size"):
+            window.mode.setCurrentIndex(window.mode.findData(mode))
+            for widget in (
+                window.mode,
+                window.preset,
+                window.dpi if mode == "dpi" else window.max_mib,
+                window.format,
+                window.print_width,
+                window.reference,
+                window.quality if mode == "dpi" else window.min_quality,
+                window.jpeg_engine,
+            ):
+                scroll.ensureWidgetVisible(widget)
+                (widget if focused else window.add_files).setFocus()
+                app.processEvents()
+                before, revision, position = window.settings(), window.revision, bar.value()
+                direction = 1 if position else -1
+                QTest.wheelEvent(
+                    window.windowHandle(),
+                    widget.mapTo(window, widget.rect().center()),
+                    QPoint(0, direction * 120),
+                    QPoint(0, direction * 40) if trackpad else QPoint(),
+                    phase=Qt.ScrollPhase.ScrollUpdate if trackpad else Qt.ScrollPhase.NoScrollPhase,
+                )
+                app.processEvents()
+                assert window.settings() == before
+                assert window.revision == revision
+                assert bar.value() != position
+    finally:
+        dispose(window, app)
+
+
+def test_settings_still_accept_keyboard_and_explicit_menu_selection(app):
+    window = MainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        window.dpi.setFocus()
+        QTest.keyClick(window.dpi, Qt.Key.Key_Up)
+        assert window.dpi.value() == 151
+        window.preset.setFocus()
+        QTest.keyClick(window.preset, Qt.Key.Key_Up)
+        assert window.preset.currentText() == "도표 · 인쇄"
+        assert window.dpi.value() == 600
+        QTest.mouseClick(window.preset, Qt.MouseButton.LeftButton)
+        view = window.preset.view()
+        assert view.isVisible()
+        # Qt briefly suppresses releases after opening a combo popup.
+        QTest.qWait(app.doubleClickInterval() + 20)
+        index = window.preset.model().index(2, 0)
+        QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=view.visualRect(index).center())
+        assert window.preset.currentText() == "균형"
+        assert window.dpi.value() == 150
     finally:
         dispose(window, app)
 
@@ -148,6 +231,7 @@ def test_loading_and_settings_never_automatically_trial_encode(png, tmp_path, ap
 def test_size_mode_hides_dpi_and_exports_under_cap_with_publication_preset(png, tmp_path, app):
     window = MainWindow()
     try:
+        window.preset.setCurrentIndex(0)
         window._asset_loaded(probe(png))
         window.mode.setCurrentIndex(window.mode.findData("size"))
         window.format.setCurrentIndex(window.format.findData("jpeg"))

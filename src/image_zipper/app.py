@@ -61,6 +61,22 @@ def label(text: str, name: str = "", wrap: bool = False) -> QLabel:
     return widget
 
 
+class SettingComboBox(QComboBox):
+    def wheelEvent(self, event):
+        # Leave wheel/trackpad gestures to the surrounding settings scroll area.
+        event.ignore()
+
+
+class SettingSpinBox(QSpinBox):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class SettingDoubleSpinBox(QDoubleSpinBox):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 def app_icon() -> QIcon:
     pixmap = QPixmap(128, 128)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -188,7 +204,7 @@ class MainWindow(QMainWindow):
         controls.setContentsMargins(16, 20, 16, 16)
         controls.setSpacing(10)
         controls.addWidget(label("작업", "section"))
-        self.operation = QComboBox(self.settings_card)
+        self.operation = SettingComboBox(self.settings_card)
         self.operation.addItems(["파일 압축", "PDF로 합치기"])
         self.operation.hide()
         self.navigation = []
@@ -203,23 +219,23 @@ class MainWindow(QMainWindow):
             controls.addWidget(button)
         controls.addSpacing(14)
         controls.addWidget(label("크기 조절", "section"))
-        self.mode = QComboBox()
+        self.mode = SettingComboBox()
         self.mode.addItem("DPI 지정", "dpi")
         self.mode.addItem("최대 파일 크기", "size")
         controls.addWidget(self.mode)
         self.target_form = QFormLayout()
         self.target_form.setVerticalSpacing(10)
-        self.dpi = QSpinBox()
+        self.dpi = SettingSpinBox()
         self.dpi.setRange(1, 9600)
         self.dpi.setSuffix(" DPI")
         self.dpi.setValue(300)
-        self.max_mib = QDoubleSpinBox()
+        self.max_mib = SettingDoubleSpinBox()
         self.max_mib.setRange(0.002, 100000)
         self.max_mib.setDecimals(3)
         self.max_mib.setSuffix(" MB")
         self.max_mib.setValue(2)
         self.max_mib.setToolTip(
-            "1 MB = 1,000,000바이트. 개별 저장은 파일마다, PDF로 합치기은 전체에 적용합니다."
+            "1 MB = 1,000,000바이트. 개별 저장은 파일마다, PDF로 합치기는 전체에 적용합니다."
         )
         self.target_form.addRow("해상도", self.dpi)
         self.target_form.addRow("최대 용량", self.max_mib)
@@ -227,8 +243,8 @@ class MainWindow(QMainWindow):
         self.mode_help = label("", "caption", True)
         controls.addWidget(self.mode_help)
         controls.addSpacing(14)
-        controls.addWidget(label("출력", "section"))
-        self.format = QComboBox()
+        controls.addWidget(label("품질", "section"))
+        self.format = SettingComboBox()
         for text, value in (
             ("자동", "auto"),
             ("JPEG", "jpeg"),
@@ -239,19 +255,16 @@ class MainWindow(QMainWindow):
         ):
             self.format.addItem(text, value)
         self.format.setToolTip("기존 PDF는 PDF로 저장합니다.")
-        self.preset = QComboBox()
+        self.preset = SettingComboBox()
         self.preset.addItems(["사진 · 인쇄", "도표 · 인쇄", "균형", "작은 파일"])
-        output_form = QFormLayout()
-        output_form.setVerticalSpacing(10)
-        output_form.addRow("파일 형식", self.format)
-        output_form.addRow("품질", self.preset)
-        controls.addLayout(output_form)
+        self.preset.setCurrentIndex(2)
+        controls.addWidget(self.preset)
         self.artwork = QCheckBox("도표의 선과 색상 보존")
         self.artwork.setToolTip(
             "손실 코덱을 사용하지 않습니다. 해상도를 낮추면 세부 정보는 줄어듭니다."
         )
         controls.addSpacing(14)
-        self.advanced_toggle = QPushButton("›  세부 설정")
+        self.advanced_toggle = QPushButton("›  고급 설정")
         self.advanced_toggle.setObjectName("subtle")
         self.advanced_toggle.setCheckable(True)
         controls.addWidget(self.advanced_toggle, 0, Qt.AlignmentFlag.AlignLeft)
@@ -260,23 +273,24 @@ class MainWindow(QMainWindow):
         advanced_layout.setContentsMargins(0, 0, 0, 0)
         advanced_layout.setSpacing(10)
         advanced_layout.addWidget(self.artwork)
-        self.print_width = QDoubleSpinBox()
+        self.print_width = SettingDoubleSpinBox()
         self.print_width.setRange(0, 10000)
         self.print_width.setSpecialValueText("원본 기준")
         self.print_width.setSuffix(" mm")
         self.print_width.setToolTip("인쇄할 너비를 지정하면 이 크기를 기준으로 DPI를 계산합니다.")
-        self.reference = QSpinBox()
+        self.reference = SettingSpinBox()
         self.reference.setRange(1, 9600)
         self.reference.setValue(300)
         self.reference.setSuffix(" DPI")
-        self.quality = QSpinBox()
+        self.quality = SettingSpinBox()
         self.quality.setRange(1, 100)
-        self.min_quality = QSpinBox()
+        self.min_quality = SettingSpinBox()
         self.min_quality.setRange(1, 100)
         self.min_quality.setToolTip("용량 모드는 이 품질 이상에서 해상도와 품질을 자동 조절합니다.")
         self.advanced_form = QFormLayout()
         self.advanced_form.setVerticalSpacing(10)
         for text, widget in (
+            ("파일 형식", self.format),
             ("인쇄 너비", self.print_width),
             ("기본 DPI", self.reference),
             ("압축 품질", self.quality),
@@ -284,7 +298,7 @@ class MainWindow(QMainWindow):
         ):
             self.advanced_form.addRow(text, widget)
         advanced_layout.addLayout(self.advanced_form)
-        self.jpeg_engine = QComboBox()
+        self.jpeg_engine = SettingComboBox()
         self.jpeg_engine.addItem("Jpegli · 압축 효율", "jpegli")
         self.jpeg_engine.addItem("JPEG · 색상 디테일", "pillow")
         advanced_layout.addWidget(self.jpeg_engine)
@@ -295,7 +309,7 @@ class MainWindow(QMainWindow):
         self.advanced_toggle.toggled.connect(self.advanced_panel.setVisible)
         self.advanced_toggle.toggled.connect(
             lambda opened: self.advanced_toggle.setText(
-                "⌄  세부 설정" if opened else "›  세부 설정"
+                "⌄  고급 설정" if opened else "›  고급 설정"
             )
         )
         controls.addWidget(self.advanced_panel)
