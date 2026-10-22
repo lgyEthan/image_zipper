@@ -77,9 +77,7 @@ def collect_licenses(destination: Path) -> None:
             )
     for filename in ("THIRD_PARTY_NOTICES.txt", "REBUILDING.txt"):
         shutil.copyfile(ROOT / "packaging" / filename, destination / filename)
-    shutil.copyfile(
-        ROOT / "packaging/licenses/Python-LICENSE.txt", destination / "Python-LICENSE.txt"
-    )
+    shutil.copytree(ROOT / "packaging/licenses", destination, dirs_exist_ok=True)
     (destination / "versions.txt").write_text(
         "\n".join(f"{name}: {version}" for name, version in versions.items()) + "\n",
         encoding="utf-8",
