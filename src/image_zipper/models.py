@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Event
 
-from .edits import ImageEdits, edited_size, rotation_layout
+from .edits import ImageEdits, crop_layout, edited_size
 
 
 class CompressionError(Exception):
@@ -91,7 +91,7 @@ class Asset:
             width = settings.print_width_mm / 25.4
             w, h = self.pixel_size
             return width, width * h / max(1, w)
-        _, (x0, y0, x1, y1) = rotation_layout((self.width, self.height), self.edits)
+        _, (x0, y0, x1, y1) = crop_layout((self.width, self.height), self.edits)
         dx, dy = self.dpi_x or settings.reference_dpi, self.dpi_y or settings.reference_dpi
         if self.edits.turns % 2:
             dx, dy = dy, dx

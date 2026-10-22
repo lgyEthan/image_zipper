@@ -22,16 +22,32 @@ class ImageEdits:
     crop: bool = True
     width: int | None = None
     height: int | None = None
+    # Normalized bounds within the rotated, automatically trimmed canvas.
+    crop_box: tuple[float, float, float, float] | None = None
+    crop_ratio: tuple[int, int] | None = None
 
     @property
     def active(self) -> bool:
-        return bool(self.mosaics or self.turns % 4 or self.angle or self.width)
+        return bool(self.mosaics or self.turns % 4 or self.angle or self.width or self.crop_box)
 
     @property
     def rotation(self) -> float:
         return (self.turns * 90 + self.angle) % 360
 
     def validate(self):
+        if self.crop_box is not None:
+            if (
+                len(self.crop_box) != 4
+                or any(not math.isfinite(v) or not 0 <= v <= 1 for v in self.crop_box)
+                or self.crop_box[0] >= self.crop_box[2]
+                or self.crop_box[1] >= self.crop_box[3]
+            ):
+                raise ValueError("자르기 영역은 이미지 안에 지정하세요.")
+        if self.crop_ratio is not None and (
+            len(self.crop_ratio) != 2
+            or any(not isinstance(v, int) or not 1 <= v <= 1_000_000 for v in self.crop_ratio)
+        ):
+            raise ValueError("올바르지 않은 자르기 비율입니다.")
         if not math.isfinite(self.angle) or not -45 <= self.angle <= 45:
             raise ValueError("기울기는 -45°부터 45°까지 조절할 수 있습니다.")
         if (self.width is None) != (self.height is None):
@@ -87,16 +103,50 @@ def rotation_layout(size: tuple[int, int], edits: ImageEdits):
     return expanded, (left, top, left + width, top + height)
 
 
+def crop_bounds(size, box, ratio=None):
+    """Snap a manual selection to pixels; standard ratios retain exact integer multiples."""
+    w, h = size
+    if box is None:
+        return 0, 0, w, h
+    left = min(w - 1, max(0, round(box[0] * w)))
+    top = min(h - 1, max(0, round(box[1] * h)))
+    right = min(w, max(left + 1, round(box[2] * w)))
+    bottom = min(h, max(top + 1, round(box[3] * h)))
+    if ratio:
+        a, b = ratio
+        divisor = math.gcd(a, b)
+        a, b = a // divisor, b // divisor
+        multiple = min((right - left) // a, (bottom - top) // b)
+        if multiple:
+            width, height = multiple * a, multiple * b
+        else:
+            # A tiny source or a relatively prime source ratio may not contain
+            # even one exact multiple. Keep the closest nonempty pixel size.
+            scale = min((right - left) / a, (bottom - top) / b)
+            width, height = max(1, round(a * scale)), max(1, round(b * scale))
+        left += (right - left - width) // 2
+        top += (bottom - top - height) // 2
+        right, bottom = left + width, top + height
+    return left, top, right, bottom
+
+
+def crop_layout(size, edits):
+    """The final source rectangle, before explicit output-pixel resizing."""
+    expanded, base = rotation_layout(size, edits)
+    box = crop_bounds((base[2] - base[0], base[3] - base[1]), edits.crop_box, edits.crop_ratio)
+    return expanded, (base[0] + box[0], base[1] + box[1], base[0] + box[2], base[1] + box[3])
+
+
 def edited_size(size: tuple[int, int], edits: ImageEdits) -> tuple[int, int]:
     if edits.width is not None:
         return edits.width, edits.height
-    _, (x0, y0, x1, y1) = rotation_layout(size, edits)
+    _, (x0, y0, x1, y1) = crop_layout(size, edits)
     return x1 - x0, y1 - y0
 
 
 def source_point(point, size, edits):
     """Map a normalized edited-canvas point back to the oriented source image."""
-    expanded, box = rotation_layout(size, edits)
+    expanded, box = crop_layout(size, edits)
     x = box[0] + point[0] * (box[2] - box[0]) - expanded[0] / 2
     y = box[1] + point[1] * (box[3] - box[1]) - expanded[1] / 2
     angle = math.radians(edits.rotation)
@@ -143,7 +193,7 @@ def apply_edits(
         if preview and reference_size is not None:
             # Use full-resolution crop coordinates on the thumbnail, so dragged
             # masks line up with the exported pixels even on very large images.
-            expanded, box = rotation_layout(reference_size, edits)
+            expanded, box = crop_layout(reference_size, edits)
             target = edited_size(reference_size, edits)
             scale = min(1.0, 1000 / max(target))
             target = tuple(max(1, round(value * scale)) for value in target)
@@ -169,21 +219,21 @@ def apply_edits(
             )
             old.close()
             return im
+        expanded, box = crop_layout(im.size, edits)
         if edits.rotation:
             if not edits.crop and edits.angle and im.mode not in {"RGBA", "LA"}:
                 if im.mode == "CMYK":
                     raise ValueError("CMYK의 기울기 보정은 빈 여백 자동 자르기를 사용하세요.")
                 old, im = im, im.convert("LA" if im.mode in {"L", "1"} else "RGBA")
                 old.close()
-            expanded, box = rotation_layout(im.size, edits)
             rotated = im.rotate(edits.rotation, resample=Image.Resampling.BICUBIC, expand=True)
             im.close()
             im = rotated
             if im.size != expanded:
                 raise ValueError("회전 결과의 크기를 확인할 수 없습니다.")
-            if box != (0, 0, *expanded):
-                old, im = im, im.crop(box)
-                old.close()
+        if box != (0, 0, *expanded):
+            old, im = im, im.crop(box)
+            old.close()
         if edits.width is not None:
             target = edits.width, edits.height
             if preview:

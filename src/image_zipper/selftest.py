@@ -94,13 +94,19 @@ def run(report_path: Path | None = None) -> int:
             editor.show()
             wait_for(lambda: editor.source is not None)
             editor._mosaic(((0.2, 0.2), (0.6, 0.2), (0.6, 0.6), (0.2, 0.6)))
+            editor.ratios["4:5"][0].setChecked(True)
             editor._rotate(1)
             editor.angle.setValue(8.5)
             editor.width.setValue(240)
             editor.undo()
             editor.redo()
             editor.accept()
-            if editor.result() != 1 or not editor.edits.mosaics or editor.edits.width != 240:
+            if (
+                editor.result() != 1
+                or not editor.edits.mosaics
+                or not editor.edits.crop_box
+                or editor.edits.width != 240
+            ):
                 raise RuntimeError("Image editor apply/undo/redo failed")
             window._apply_edits(asset, editor.edits)
             editor.deleteLater()

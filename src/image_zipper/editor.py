@@ -5,8 +5,8 @@ from dataclasses import replace
 
 from PIL import Image
 from PIL.ImageQt import ImageQt
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QPixmap, QShortcut
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -21,7 +21,16 @@ from PySide6.QtWidgets import (
 )
 
 from .controls import SettingDoubleSpinBox, SettingSlider, SettingSpinBox
-from .edits import ImageEdits, Mosaic, apply_edits, edited_size, source_point
+from .editor_canvas import CROP, MOSAIC, ROTATE, SIZE, EditorCanvas
+from .edits import (
+    ImageEdits,
+    Mosaic,
+    apply_edits,
+    crop_bounds,
+    edited_size,
+    rotation_layout,
+    source_point,
+)
 from .workers import Previewer
 
 
@@ -31,103 +40,6 @@ def caption(text=""):
     widget.setWordWrap(True)
     widget.setObjectName("caption")
     return widget
-
-
-class EditorCanvas(QWidget):
-    region_added = Signal(object)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.pixmap = QPixmap()
-        self.tool = 0
-        self.start = self.end = None
-        self.message = "미리보기 준비 중…"
-        self.setMinimumSize(320, 260)
-        self.setAccessibleName("이미지 편집 미리보기")
-        self.setToolTip("모자이크할 부분을 드래그하세요. 여러 영역을 추가할 수 있습니다.")
-
-    def image_rect(self):
-        if self.pixmap.isNull():
-            return QRectF()
-        area = QRectF(self.rect()).adjusted(16, 16, -16, -16)
-        scale = min(area.width() / self.pixmap.width(), area.height() / self.pixmap.height())
-        size = QPointF(self.pixmap.width() * scale, self.pixmap.height() * scale)
-        origin = area.center() - size / 2
-        return QRectF(origin.x(), origin.y(), size.x(), size.y())
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), self.palette().base())
-        box = self.image_rect()
-        if box.isEmpty():
-            painter.setPen(self.palette().text().color())
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.message)
-            return
-        painter.save()
-        painter.setClipRect(box)
-        painter.fillRect(box, QColor("#dddddd"))
-        for y in range(int(box.top()), int(box.bottom()) + 12, 12):
-            for x in range(int(box.left()), int(box.right()) + 12, 12):
-                if ((x - int(box.left())) // 12 + (y - int(box.top())) // 12) % 2:
-                    painter.fillRect(x, y, 12, 12, QColor("#eeeeee"))
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        painter.drawPixmap(box, self.pixmap, QRectF(self.pixmap.rect()))
-        if self.tool == 2:
-            painter.setPen(QPen(QColor(255, 255, 255, 150), 1))
-            for fraction in (1 / 3, 2 / 3):
-                x, y = box.left() + box.width() * fraction, box.top() + box.height() * fraction
-                painter.drawLine(QPointF(x, box.top()), QPointF(x, box.bottom()))
-                painter.drawLine(QPointF(box.left(), y), QPointF(box.right(), y))
-        if self.start is not None and self.end is not None:
-            selection = QRectF(self.start, self.end).normalized()
-            painter.fillRect(selection, QColor(0, 122, 255, 40))
-            painter.setPen(QPen(QColor("#007aff"), 2))
-            painter.drawRect(selection)
-        painter.restore()
-
-    def _clamp(self, point):
-        box = self.image_rect()
-        return QPointF(
-            max(box.left(), min(box.right(), point.x())),
-            max(box.top(), min(box.bottom(), point.y())),
-        )
-
-    def mousePressEvent(self, event):
-        if (
-            self.tool == 0
-            and event.button() == Qt.MouseButton.LeftButton
-            and self.image_rect().contains(event.position())
-        ):
-            self.start = self.end = event.position()
-            self.update()
-        else:
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self.start is not None:
-            self.end = self._clamp(event.position())
-            self.update()
-
-    def mouseReleaseEvent(self, event):
-        if self.start is None or event.button() != Qt.MouseButton.LeftButton:
-            return
-        self.end = self._clamp(event.position())
-        selection, box = QRectF(self.start, self.end).normalized(), self.image_rect()
-        self.start = self.end = None
-        if selection.width() >= 4 and selection.height() >= 4:
-            self.region_added.emit(
-                tuple(
-                    ((p.x() - box.left()) / box.width(), (p.y() - box.top()) / box.height())
-                    for p in (
-                        selection.topLeft(),
-                        selection.topRight(),
-                        selection.bottomRight(),
-                        selection.bottomLeft(),
-                    )
-                )
-            )
-        self.update()
 
 
 class EditorDialog(QDialog):
@@ -179,20 +91,26 @@ class EditorDialog(QDialog):
         root.setSpacing(12)
         tools = QHBoxLayout()
         tools.addStretch()
-        self.tools = []
+        self.tools = [None] * 4
         self.tool_group = QButtonGroup(self)
-        for index, text in enumerate(("모자이크", "크기", "기울기")):
+        for index, text in (
+            (CROP, "자르기"),
+            (MOSAIC, "모자이크"),
+            (SIZE, "크기"),
+            (ROTATE, "기울기"),
+        ):
             button = QPushButton(text)
             button.setCheckable(True)
             self.tool_group.addButton(button)
             button.setMinimumWidth(100)
             button.toggled.connect(lambda checked, i=index: self._tool(i) if checked else None)
-            self.tools.append(button)
+            self.tools[index] = button
             tools.addWidget(button)
         tools.addStretch()
         root.addLayout(tools)
         self.canvas = EditorCanvas()
         self.canvas.region_added.connect(self._mosaic)
+        self.canvas.crop_changed.connect(self._set_crop_box)
         root.addWidget(self.canvas, 1)
         self.dimensions = caption()
         self.dimensions.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -293,6 +211,45 @@ class EditorDialog(QDialog):
             )
         )
         self.panels.addWidget(rotation)
+        cropping = QWidget()
+        layout = QVBoxLayout(cropping)
+        layout.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        row.addStretch()
+        self.ratio_group = QButtonGroup(self)
+        self.ratios = {}
+        for label, ratio in (
+            ("자유", None),
+            ("원본", (self.asset.width, self.asset.height)),
+            ("1:1", (1, 1)),
+            ("4:5", (4, 5)),
+            ("3:2", (3, 2)),
+            ("16:9", (16, 9)),
+        ):
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setMinimumWidth(64)
+            button.setAccessibleName(f"자르기 비율 {label}")
+            self.ratio_group.addButton(button)
+            button.toggled.connect(
+                lambda checked, r=ratio: self._set_crop_ratio(r) if checked else None
+            )
+            self.ratios[label] = (button, ratio)
+            row.addWidget(button)
+        row.addStretch()
+        self.clear_crop = QPushButton("자르기 해제")
+        self.clear_crop.clicked.connect(
+            lambda: self._geometry(replace(self.edits, crop_box=None, crop_ratio=None))
+        )
+        row.addWidget(self.clear_crop)
+        layout.addLayout(row)
+        self.crop_hint = caption(
+            "드래그로 영역 선택 · 안쪽을 끌어 이동 · 테두리와 모서리로 크기 조절"
+        )
+        self.crop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.crop_hint)
+        layout.addStretch()
+        self.panels.addWidget(cropping)
         root.addWidget(self.panels)
         self.error = caption()
         root.addWidget(self.error)
@@ -329,18 +286,28 @@ class EditorDialog(QDialog):
         ):
             shortcut = QShortcut(sequence, self)
             shortcut.activated.connect(callback)
-        self._tool(0)
+        self._tool(CROP)
 
     def _tool(self, index):
         self.canvas.start = self.canvas.end = None
+        self.canvas.drag = None
         self.canvas.tool = index
         self.canvas.setCursor(
-            Qt.CursorShape.CrossCursor if index == 0 else Qt.CursorShape.ArrowCursor
+            Qt.CursorShape.CrossCursor if index in {MOSAIC, CROP} else Qt.CursorShape.ArrowCursor
+        )
+        self.canvas.setToolTip(
+            "드래그로 자르기 영역 지정 · 안쪽은 이동 · 테두리와 모서리는 크기 조절 · 방향키로 미세 이동"
+            if index == CROP
+            else "모자이크할 부분을 드래그하세요. 여러 영역을 추가할 수 있습니다."
+            if index == MOSAIC
+            else ""
         )
         self.canvas.update()
         self.panels.setCurrentIndex(index)
         for i, button in enumerate(self.tools):
             button.setChecked(i == index)
+        self._sync()
+        self._render()
 
     def _sync(self):
         self.updating = True
@@ -350,6 +317,37 @@ class EditorDialog(QDialog):
             self.angle.setValue(self.edits.angle)
             self.angle_slider.setValue(round(self.edits.angle * 10))
             self.crop.setChecked(self.edits.crop)
+            self.canvas.crop_size = self._crop_size()
+            cw, ch = self.canvas.crop_size
+            cx0, cy0, cx1, cy1 = crop_bounds((cw, ch), self.edits.crop_box, self.edits.crop_ratio)
+            self.canvas.crop_box = (cx0 / cw, cy0 / ch, cx1 / cw, cy1 / ch)
+            self.canvas.crop_ratio = self.edits.crop_ratio
+            self.clear_crop.setEnabled(
+                self.edits.crop_box is not None or self.edits.crop_ratio is not None
+            )
+            # Compare ratios numerically so a rotated or reopened selection is recognized.
+            chosen = next(
+                (
+                    button
+                    for button, ratio in self.ratios.values()
+                    if ratio == self.edits.crop_ratio
+                ),
+                None,
+            )
+            if chosen is None and self.edits.crop_ratio:
+                a, b = self.edits.crop_ratio
+                chosen = next(
+                    (
+                        button
+                        for button, ratio in self.ratios.values()
+                        if ratio and ratio[0] * b == ratio[1] * a
+                    ),
+                    None,
+                )
+            self.ratio_group.setExclusive(False)
+            for button, _ in self.ratios.values():
+                button.setChecked(button is chosen)
+            self.ratio_group.setExclusive(True)
             self.clear_mosaics.setEnabled(bool(self.edits.mosaics))
             if self.edits.mosaics:
                 self.strength.setValue(self.edits.mosaics[-1].strength)
@@ -460,8 +458,52 @@ class EditorDialog(QDialog):
             edits = replace(edits, height=max(1, round(edits.width * natural[1] / natural[0])))
         self._change(edits, commit=commit)
 
+    def _crop_size(self, edits=None):
+        _, (x0, y0, x1, y1) = rotation_layout(
+            (self.asset.width, self.asset.height), edits or self.edits
+        )
+        return x1 - x0, y1 - y0
+
+    def _set_crop_box(self, box):
+        if self.updating or self.source is None:
+            return
+        width, height = self._crop_size()
+        x0, y0, x1, y1 = crop_bounds((width, height), box, self.edits.crop_ratio)
+        box = (x0 / width, y0 / height, x1 / width, y1 / height)
+        self._geometry(
+            replace(
+                self.edits,
+                crop_box=None if box == (0, 0, 1, 1) and self.edits.crop_ratio is None else box,
+            )
+        )
+        self._sync()
+
+    def _set_crop_ratio(self, ratio):
+        if self.updating:
+            return
+        if ratio is None:
+            self._change(replace(self.edits, crop_ratio=None))
+            return
+        width, height = self._crop_size()
+        scale = min(width / ratio[0], height / ratio[1])
+        w, h = ratio[0] * scale / width, ratio[1] * scale / height
+        old = self.edits.crop_box or (0, 0, 1, 1)
+        cx, cy = (old[0] + old[2]) / 2, (old[1] + old[3]) / 2
+        x, y = max(0, min(1 - w, cx - w / 2)), max(0, min(1 - h, cy - h / 2))
+        x0, y0, x1, y1 = crop_bounds((width, height), (x, y, x + w, y + h), ratio)
+        box = (x0 / width, y0 / height, x1 / width, y1 / height)
+        self._geometry(replace(self.edits, crop_ratio=ratio, crop_box=box))
+
     def _rotate(self, turns):
         edits = replace(self.edits, turns=(self.edits.turns + turns) % 4)
+        box = edits.crop_box
+        for _ in range(turns % 4):
+            if box:
+                x0, y0, x1, y1 = box
+                box = (y0, 1 - x1, y1, 1 - x0)
+        edits = replace(edits, crop_box=box)
+        if edits.crop_ratio and turns % 2:
+            edits = replace(edits, crop_ratio=edits.crop_ratio[::-1])
         if edits.width is not None:
             edits = replace(edits, width=edits.height, height=edits.width)
         self._geometry(edits)
@@ -487,7 +529,9 @@ class EditorDialog(QDialog):
         try:
             result = apply_edits(
                 self.source,
-                self.edits,
+                replace(self.edits, crop_box=None, crop_ratio=None, width=None, height=None)
+                if self.canvas.tool == CROP
+                else self.edits,
                 preview=True,
                 reference_size=(self.asset.width, self.asset.height),
             )

@@ -213,6 +213,244 @@ def test_editor_can_close_while_preview_process_is_starting(png, app):
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
+def test_crop_drag_handles_move_ratio_undo_and_reopen(png, app):
+    from dataclasses import replace
+
+    from image_zipper.editor import EditorDialog
+    from image_zipper.editor_canvas import CROP, SIZE
+    from image_zipper.edits import edited_size
+    from image_zipper.imaging import preview_source
+
+    asset = probe(png)
+    before = png.read_bytes()
+    preview = preview_source(asset)[0]
+    dialog = EditorDialog(asset, preview_data=preview)
+
+    def drag(start, end):
+        QTest.mousePress(dialog.canvas, Qt.MouseButton.LeftButton, pos=start)
+        QTest.mouseMove(dialog.canvas, end)
+        QTest.mouseRelease(dialog.canvas, Qt.MouseButton.LeftButton, pos=end)
+
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.canvas.tool == CROP
+        assert dialog.ratios["자유"][0].isChecked()
+        image = dialog.canvas.image_rect()
+        start = QPoint(
+            round(image.left() + image.width() * 0.2), round(image.top() + image.height() * 0.2)
+        )
+        end = QPoint(
+            round(image.left() + image.width() * 0.7), round(image.top() + image.height() * 0.8)
+        )
+        drag(start, end)
+        first = dialog.edits
+        assert first.crop_box == pytest.approx((0.2, 0.2, 0.7, 0.8), abs=0.003)
+        # Selecting a crop never crops away the context needed to expand it again.
+        dialog._render()
+        assert dialog.canvas.pixmap.width() / dialog.canvas.pixmap.height() == pytest.approx(1.5)
+        selection = dialog.canvas.selection_rect()
+        drag(
+            selection.bottomRight().toPoint(), (selection.bottomRight() + QPoint(35, 20)).toPoint()
+        )
+        resized = dialog.edits
+        assert resized.crop_box[2] > first.crop_box[2]
+        assert resized.crop_box[3] > first.crop_box[3]
+        selection = dialog.canvas.selection_rect()
+        drag(selection.center().toPoint(), (selection.center() + QPoint(25, -15)).toPoint())
+        moved = dialog.edits
+        assert edited_size((720, 480), moved) == edited_size((720, 480), resized)
+        assert moved.crop_box[0] > resized.crop_box[0]
+        dialog.undo()
+        assert dialog.edits == resized
+        dialog.redo()
+        assert dialog.edits == moved
+        for label, ratio in (("1:1", (1, 1)), ("4:5", (4, 5))):
+            # Also covers native accessibility activation without clicked().
+            dialog.ratios[label][0].setChecked(True)
+            assert dialog.edits.crop_ratio == ratio
+            assert sum(button.isChecked() for button, _ in dialog.ratios.values()) == 1
+            w, h = edited_size((720, 480), dialog.edits)
+            assert w * ratio[1] == h * ratio[0]
+            selection = dialog.canvas.selection_rect()
+            drag(
+                selection.bottomRight().toPoint(),
+                (selection.bottomRight() - QPoint(50, 50)).toPoint(),
+            )
+            w, h = edited_size((720, 480), dialog.edits)
+            assert w * ratio[1] == h * ratio[0]
+        after = dialog.edits
+        dialog._tool(SIZE)
+        assert dialog.canvas.pixmap.width() * 5 == dialog.canvas.pixmap.height() * 4
+        dialog._tool(CROP)
+        assert dialog.canvas.pixmap.width() / dialog.canvas.pixmap.height() == pytest.approx(1.5)
+        dialog.accept()
+        assert dialog.result() == 1 and dialog.edits == after
+        assert png.read_bytes() == before
+        assert not asset.edits.active
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+    reopened = EditorDialog(replace(asset, edits=after), preview_data=preview)
+    try:
+        reopened.show()
+        app.processEvents()
+        assert reopened.edits == after
+        assert reopened.canvas.pixmap.width() / reopened.canvas.pixmap.height() == pytest.approx(
+            1.5
+        )
+        QTest.mouseClick(reopened.clear_crop, Qt.MouseButton.LeftButton)
+        assert reopened.edits.crop_box is None and reopened.edits.crop_ratio is None
+        assert edited_size((720, 480), reopened.edits) == (720, 480)
+        reopened.undo()
+        assert reopened.edits == after
+        reopened.reject()
+        assert reopened.result() == 0
+    finally:
+        reopened.close()
+        reopened.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_crop_rotation_preserves_selected_content_and_ratio(png, app):
+    from PIL import Image
+
+    from image_zipper.editor import EditorDialog
+    from image_zipper.edits import apply_edits
+    from image_zipper.imaging import preview_source
+
+    asset = probe(png)
+    dialog = EditorDialog(asset, preview_data=preview_source(asset)[0])
+    try:
+        dialog._set_crop_ratio((4, 5))
+        dialog._set_crop_box((0.2, 0.1, 0.6, 0.85))
+        before = dialog.edits
+        dialog._rotate(1)
+        assert dialog.edits.crop_ratio == (5, 4)
+        with (
+            Image.open(png) as source,
+            apply_edits(source, before) as first,
+            apply_edits(source, dialog.edits) as rotated,
+        ):
+            with first.transpose(Image.Transpose.ROTATE_90) as expected:
+                assert rotated.size == expected.size
+                assert rotated.tobytes() == expected.tobytes()
+        dialog._rotate(-1)
+        assert dialog.edits.crop_box == pytest.approx(before.crop_box)
+        assert dialog.edits.crop_ratio == (4, 5)
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_crop_drag_cancel_keyboard_and_wheel(png, app):
+    from image_zipper.editor import EditorDialog
+    from image_zipper.imaging import preview_source
+
+    asset = probe(png)
+    dialog = EditorDialog(asset, preview_data=preview_source(asset)[0])
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog._set_crop_box((0.2, 0.2, 0.8, 0.8))
+        before = dialog.edits
+        canvas = dialog.canvas
+        start = canvas.selection_rect().center().toPoint()
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=start)
+        QTest.mouseMove(canvas, start + QPoint(40, 0))
+        QTest.keyClick(canvas, Qt.Key.Key_Escape)
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=start + QPoint(40, 0))
+        assert dialog.isVisible() and dialog.edits == before
+        assert canvas.crop_box == before.crop_box
+        QTest.keyClick(canvas, Qt.Key.Key_Right)
+        assert dialog.edits.crop_box[0] == pytest.approx(before.crop_box[0] + 1 / 720)
+        dialog.ratios["4:5"][0].setChecked(True)
+        before = dialog.edits
+        button = dialog.ratios["1:1"][0]
+        QTest.wheelEvent(
+            dialog.windowHandle(), button.mapTo(dialog, button.rect().center()), QPoint(0, -120)
+        )
+        assert dialog.edits == before
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.mark.parametrize("handle", ["nw", "n", "ne", "e", "se", "s", "sw", "w"])
+def test_crop_all_handles_keep_ratio_and_stay_inside_image(png, app, handle):
+    from image_zipper.editor import EditorDialog
+    from image_zipper.edits import edited_size
+    from image_zipper.imaging import preview_source
+
+    asset = probe(png)
+    dialog = EditorDialog(asset, preview_data=preview_source(asset)[0])
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog._set_crop_ratio((4, 5))
+        dialog._set_crop_box((0.3, 0.3, 0.6, 0.8))
+        selection = dialog.canvas.selection_rect()
+        image = dialog.canvas.image_rect()
+        x = (
+            selection.left()
+            if "w" in handle
+            else selection.right()
+            if "e" in handle
+            else selection.center().x()
+        )
+        y = (
+            selection.top()
+            if "n" in handle
+            else selection.bottom()
+            if "s" in handle
+            else selection.center().y()
+        )
+        start = QPoint(round(x), round(y))
+        end = QPoint(
+            round(
+                image.left() - 80 if "w" in handle else image.right() + 80 if "e" in handle else x
+            ),
+            round(
+                image.top() - 80 if "n" in handle else image.bottom() + 80 if "s" in handle else y
+            ),
+        )
+        QTest.mousePress(dialog.canvas, Qt.MouseButton.LeftButton, pos=start)
+        assert dialog.canvas.drag[0] == handle
+        QTest.mouseMove(dialog.canvas, end)
+        QTest.mouseRelease(dialog.canvas, Qt.MouseButton.LeftButton, pos=end)
+        x0, y0, x1, y1 = dialog.edits.crop_box
+        assert 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1
+        width, height = edited_size((720, 480), dialog.edits)
+        assert width * 5 == height * 4
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_original_crop_ratio_survives_straightening_without_progressive_shrinking(png, app):
+    from image_zipper.editor import EditorDialog
+    from image_zipper.edits import edited_size
+    from image_zipper.imaging import preview_source
+
+    asset = probe(png)
+    dialog = EditorDialog(asset, preview_data=preview_source(asset)[0])
+    try:
+        dialog.ratios["원본"][0].setChecked(True)
+        assert dialog.edits.crop_box == (0, 0, 1, 1)
+        for angle in (0, 5, 10, 20, 10, 5, 0):
+            dialog._angle(angle)
+            width, height = edited_size((720, 480), dialog.edits)
+            assert width * 2 == height * 3
+        assert edited_size((720, 480), dialog.edits) == (720, 480)
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 def test_native_window_controls_and_simple_default_settings(app):
     window = MainWindow()
     try:
