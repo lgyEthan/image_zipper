@@ -39,7 +39,34 @@ def main():
     elif sys.platform == "win32":
         # Select the installed MSVC toolchain without requiring a Developer
         # Command Prompt or inheriting an unrelated host's Ninja/NMake setup.
-        common += ["-G", "Visual Studio 17 2022", "-A", "x64"]
+        locator = (
+            Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
+        )
+        version = (
+            subprocess.check_output(
+                [
+                    str(locator),
+                    "-latest",
+                    "-products",
+                    "*",
+                    "-requires",
+                    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property",
+                    "installationVersion",
+                ],
+                text=True,
+            )
+            .strip()
+            .split(".")[0]
+        )
+        generator = {
+            "16": "Visual Studio 16 2019",
+            "17": "Visual Studio 17 2022",
+            "18": "Visual Studio 18 2026",
+        }.get(version)
+        if not generator:
+            raise RuntimeError("Install a supported Visual Studio C++ build toolchain")
+        common += ["-G", generator, "-A", "x64"]
     for name in ("libde265", "libheif"):
         source = extract_source(name, work / name / "source")
         options = ["-DENABLE_DECODER=OFF", "-DENABLE_ENCODER=OFF", "-DENABLE_SDL=OFF"]
