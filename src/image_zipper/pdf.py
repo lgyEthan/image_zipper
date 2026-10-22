@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import math
 import zlib
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event, RLock
@@ -13,6 +14,7 @@ import pypdfium2
 from pikepdf import Array, Dictionary, Name, Pdf, PdfImage
 from PIL import Image
 
+from .budget import fill_quality_gap, fit_quality, fit_scale
 from .models import Asset, CompressionError, Encoded, Settings, check_cancel
 
 # PDFium permits only one simultaneous caller, including preview workers.
@@ -156,12 +158,12 @@ def placements(pdf: Pdf, cancel: Event | None = None) -> tuple[dict, list[str], 
     return found, list(dict.fromkeys(notes)), protected
 
 
-def _save(pdf: Pdf) -> bytes:
+def _save(pdf: Pdf, *, recompress: bool = True) -> bytes:
     stream = io.BytesIO()
     pdf.save(
         stream,
         compress_streams=True,
-        recompress_flate=True,
+        recompress_flate=recompress,
         object_stream_mode=pikepdf.ObjectStreamMode.generate,
     )
     return stream.getvalue()
@@ -190,6 +192,75 @@ def _eligible(obj: pikepdf.Object) -> bool:
     return True
 
 
+class PDFWorkspace:
+    """Analyze once; cache original/resized pixels with a bounded memory budget."""
+
+    def __init__(self, source: bytes, cancel):
+        self.pdf = open_pdf(source)
+        self.cache = OrderedDict()
+        self.cache_bytes = 0
+        self.artwork = {}
+        try:
+            _check_signatures(self.pdf)
+            try:
+                self.images, self.notes, self.protected = placements(self.pdf, cancel)
+            except (pikepdf.PdfError, ValueError, TypeError, CompressionError) as exc:
+                check_cancel(cancel)
+                self.images, self.protected = {}, set()
+                self.notes = [f"이미지 구조 분석을 생략하고 무손실 최적화만 수행: {exc}"]
+        except BaseException:
+            self.pdf.close()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        for im in self.cache.values():
+            im.close()
+        self.pdf.close()
+
+    def _remember(self, key, im):
+        size = im.width * im.height * len(im.getbands())
+        if size > 128 * 1024**2:
+            return False
+        while self.cache and self.cache_bytes + size > 128 * 1024**2:
+            _, old = self.cache.popitem(last=False)
+            self.cache_bytes -= old.width * old.height * len(old.getbands())
+            old.close()
+        self.cache[key] = im
+        self.cache_bytes += size
+        return True
+
+    def pixels(self, key, size):
+        from .imaging import resize_to
+
+        cache_key = key, size
+        if cache_key in self.cache:
+            self.cache.move_to_end(cache_key)
+            return self.cache[cache_key], True
+        obj = self.images[key].obj
+        full_size = int(obj.Width), int(obj.Height)
+        original_key = key, full_size
+        im = self.cache.get(original_key)
+        owned = im is not None
+        if im is None:
+            if full_size[0] * full_size[1] > Image.MAX_IMAGE_PIXELS:
+                raise ValueError("PDF 이미지가 안전한 디코딩 크기를 초과합니다.")
+            im = PdfImage(obj).as_pil_image()
+            im.load()
+            if im.mode not in {"RGB", "L"}:
+                im.close()
+                raise ValueError("지원하지 않는 PDF 색상 모델")
+            self.artwork[key] = im.getcolors(256) is not None
+        if size == full_size:
+            return im, owned or self._remember(cache_key, im)
+        resized = resize_to(im, size)
+        if not owned:
+            self._remember(original_key, im) or im.close()
+        return resized, self._remember(cache_key, resized)
+
+
 def _pdf_candidate(
     source: bytes,
     settings: Settings,
@@ -198,25 +269,28 @@ def _pdf_candidate(
     cancel: Event | None,
     *,
     lossless_only: bool = False,
+    workspace: PDFWorkspace | None = None,
 ) -> Encoded:
-    from .imaging import encode_pixels, resize_to
+    from .imaging import encode_pixels
 
     check_cancel(cancel)
-    with open_pdf(source) as pdf:
-        _check_signatures(pdf)
-        try:
-            images, notes, protected = placements(pdf, cancel)
-        except (pikepdf.PdfError, ValueError, TypeError, CompressionError) as exc:
-            check_cancel(cancel)
-            images, notes, protected = (
-                {},
-                [f"이미지 구조 분석을 생략하고 무손실 최적화만 수행: {exc}"],
-                set(),
+    if workspace is None:
+        with PDFWorkspace(source, cancel) as work:
+            return _pdf_candidate(
+                source,
+                settings,
+                dpi_limit,
+                quality,
+                cancel,
+                lossless_only=lossless_only,
+                workspace=work,
             )
+    with open_pdf(source) as pdf:
+        images, notes, protected = workspace.images, list(workspace.notes), workspace.protected
         changed, skipped, dpi_values = 0, 0, []
         for key, entry in images.items():
             check_cancel(cancel)
-            obj = entry.obj
+            obj = pdf.get_object(key)
             width, height = int(obj.Width), int(obj.Height)
             if not lossless_only:
                 if key in protected or not _eligible(obj):
@@ -232,30 +306,27 @@ def _pdf_candidate(
                         if dpi_limit
                         else (width, height)
                     )
-                    im = None
                     resized = None
+                    cached = False
                     try:
-                        # Enforce Pillow's memory guard even on raw PDF image streams.
-                        if width * height > Image.MAX_IMAGE_PIXELS:
-                            raise ValueError("PDF 이미지가 안전한 디코딩 크기를 초과합니다.")
-                        im = PdfImage(obj).as_pil_image()
-                        im.load()
-                        if im.mode not in {"RGB", "L"}:
-                            raise ValueError("지원하지 않는 PDF 색상 모델")
-                        resized = resize_to(im, size)
+                        resized, cached = workspace.pixels(key, size)
                         # Low-color graphics keep a lossless codec, including in photo mode.
-                        artwork = settings.content == "artwork" or im.getcolors(256) is not None
-                        raw = zlib.compress(resized.tobytes(), 9)
-                        encoded, filter_name = raw, Name.FlateDecode
-                        if not artwork:
+                        artwork = settings.content == "artwork" or workspace.artwork[key]
+                        if artwork:
+                            encoded, filter_name = (
+                                zlib.compress(resized.tobytes(), 6),
+                                Name.FlateDecode,
+                            )
+                        else:
                             local_settings = (
                                 replace(settings, jpeg_engine="pillow")
-                                if im.mode == "L"
+                                if resized.mode == "L"
                                 else settings
                             )
-                            jpeg = encode_pixels(resized, "jpeg", quality, (72, 72), local_settings)
-                            if len(jpeg) < len(raw):
-                                encoded, filter_name = jpeg, Name.DCTDecode
+                            encoded = encode_pixels(
+                                resized, "jpeg", quality, (72, 72), local_settings
+                            )
+                            filter_name = Name.DCTDecode
                         if len(encoded) < len(obj.read_raw_bytes()):
                             obj.write(encoded, filter=filter_name)
                             if "/DecodeParms" in obj:
@@ -268,13 +339,11 @@ def _pdf_candidate(
                         skipped += 1
                         notes.append(f"일부 PDF 이미지를 보존했습니다: {exc}")
                     finally:
-                        if resized is not None and resized is not im:
+                        if resized is not None and not cached:
                             resized.close()
-                        if im is not None:
-                            im.close()
             dpi_values.extend((width / entry.width_in, height / entry.height_in))
         check_cancel(cancel)
-        data = _save(pdf)
+        data = _save(pdf, recompress=lossless_only)
         if not changed and len(data) > len(source):
             data = source
         if skipped:
@@ -313,43 +382,59 @@ def compress_pdf(source: Path | bytes, settings: Settings, cancel: Event | None 
     if settings.mode != "size":
         dpi = settings.target_dpi if settings.mode == "dpi" else None
         return _pdf_candidate(data, settings, dpi, settings.quality, cancel)
-    # Avoid generation loss when structural optimization alone already meets the cap.
-    original = _pdf_candidate(data, settings, None, settings.quality, cancel, lossless_only=True)
-    if original.size_bytes <= settings.max_bytes:
-        return original
-    max_dpi = min(original.dpi_y or 9600, 9600)
-    full = _pdf_candidate(data, settings, max_dpi, settings.min_quality, cancel)
-    if full.size_bytes <= settings.max_bytes:
-        best, best_dpi = full, max_dpi
-    else:
-        # No print preset or target DPI constrains byte-budget mode. At this
-        # bound every eligible image is reduced to its minimum of one pixel.
-        min_dpi = 1e-6
-        minimum = _pdf_candidate(data, settings, min_dpi, settings.min_quality, cancel)
-        if minimum.size_bytes > settings.max_bytes:
-            minimum.target_met = False
-            minimum.warnings.append(
+    with PDFWorkspace(data, cancel) as workspace:
+
+        def candidate(dpi, quality, lossless=False):
+            return _pdf_candidate(
+                data,
+                settings,
+                dpi,
+                quality,
+                cancel,
+                lossless_only=lossless,
+                workspace=workspace,
+            )
+
+        # A lossless result already retains all available detail; do not pad it.
+        original = candidate(None, 100, True)
+        if original.size_bytes <= settings.max_bytes:
+            original.details += " · 무손실 최적화로 목표 충족"
+            return original
+        max_dpi = min(original.dpi_y or 9600, 9600)
+        full = candidate(max_dpi, settings.min_quality)
+        maximum_pixels = max(
+            (
+                max(int(entry.obj.Width), int(entry.obj.Height))
+                for entry in workspace.images.values()
+            ),
+            default=1,
+        )
+        best, scale = fit_scale(
+            lambda value: candidate(max_dpi * value, settings.min_quality),
+            full,
+            settings.max_bytes,
+            min(1e-6, 1 / maximum_pixels),
+        )
+        if not best.target_met:
+            best.warnings.append(
                 "이미지를 최소 픽셀까지 줄여도 텍스트·벡터·보존 이미지·문서 구조가 용량 상한보다 큽니다. 용량 상한을 늘려주세요."
             )
-            return minimum
-        best, best_dpi = minimum, min_dpi
-        lo, hi = min_dpi, max_dpi
-        for _ in range(7):
-            dpi = (lo + hi) / 2
-            trial = _pdf_candidate(data, settings, dpi, settings.min_quality, cancel)
-            if trial.size_bytes <= settings.max_bytes:
-                best, best_dpi, lo = trial, dpi, dpi
-            else:
-                hi = dpi
-    lo, hi = settings.min_quality + 1, settings.quality
-    while lo <= hi:
-        quality = (lo + hi) // 2
-        trial = _pdf_candidate(data, settings, best_dpi, quality, cancel)
-        if trial.size_bytes <= settings.max_bytes:
-            best, lo = trial, quality + 1
-        else:
-            hi = quality - 1
-    return best
+            return best
+        if settings.content != "artwork":
+            best = fit_quality(
+                lambda quality: candidate(max_dpi * scale, quality),
+                best,
+                settings.min_quality,
+                settings.max_bytes,
+            )
+            best = fill_quality_gap(
+                lambda value, quality: candidate(max_dpi * value, quality),
+                best,
+                scale,
+                settings.max_bytes,
+            )
+        best.details += f" · 상한의 {best.size_bytes / settings.max_bytes:.1%} 사용"
+        return best
 
 
 def merge_pdf(
@@ -395,7 +480,7 @@ def merge_pdf(
                         merged.pages.extend(page_pdf.pages)
                 finally:
                     im.close()
-        source_bytes = _save(merged)
+        source_bytes = _save(merged, recompress=False)
     result = compress_pdf(source_bytes, settings, cancel)
     result.warnings = list(dict.fromkeys(notes + result.warnings))
     return result

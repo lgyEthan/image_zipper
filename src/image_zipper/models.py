@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Event
 
@@ -24,7 +24,7 @@ class Settings:
     mode: str = "dpi"  # dpi, size, original
     target_dpi: float = 300
     max_bytes: int = 2 * 1024 * 1024
-    quality: int = 92
+    quality: int = 92  # Fixed quality for DPI/original modes; size mode searches up to 100
     min_quality: int = 82
     output_format: str = "auto"
     content: str = "photo"  # artwork never introduces a lossy image codec
@@ -47,8 +47,6 @@ class Settings:
                 raise CompressionError("DPI는 1–9600 사이의 값이어야 합니다.")
         if not (1 <= self.min_quality <= 100 and 1 <= self.quality <= 100):
             raise CompressionError("인코더 품질은 1–100 사이의 값이어야 합니다.")
-        if self.mode == "size" and self.min_quality > self.quality:
-            raise CompressionError("품질은 1–100이고, 최소 품질보다 높아야 합니다.")
         if self.mode == "size" and self.max_bytes < 1024:
             raise CompressionError("목표 용량은 1 KiB 이상이어야 합니다.")
         if self.print_width_mm is not None and (
@@ -119,9 +117,46 @@ class SavedResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def source_fingerprints(assets: list[Asset]) -> tuple:
+    return tuple(
+        (str(asset.path), stat.st_size, stat.st_mtime_ns, stat.st_ino)
+        for asset in assets
+        for stat in (asset.path.stat(),)
+    )
+
+
+@dataclass
+class TrialCache:
+    """A temporary encoded result; only reused for the same inputs and settings."""
+
+    path: Path
+    settings: Settings
+    fingerprints: tuple
+    merged: bool
+    result: Encoded
+    size_bytes: int
+
+    def read(self, assets: list[Asset], settings: Settings, merged: bool) -> Encoded | None:
+        if settings != self.settings or merged != self.merged or not self.result.target_met:
+            return None
+        if not merged and (len(assets) != 1 or (assets[0].frames > 1 and not assets[0].is_pdf)):
+            return None
+        try:
+            if self.fingerprints != source_fingerprints(assets):
+                return None
+            data = self.path.read_bytes()
+        except OSError:
+            return None
+        if len(data) != self.size_bytes or (
+            settings.mode == "size" and len(data) > settings.max_bytes
+        ):
+            return None
+        return replace(self.result, data=data)
+
+
 def human_bytes(value: int | float) -> str:
-    if value >= 1024 * 1024:
-        return f"{value / (1024 * 1024):.2f} MiB"
-    if value >= 1024:
-        return f"{value / 1024:.1f} KiB"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.2f} MB"
+    if value >= 1000:
+        return f"{value / 1000:.1f} kB"
     return f"{value:.0f} B"

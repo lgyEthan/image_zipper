@@ -7,16 +7,18 @@ import struct
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
-from threading import Event
+from threading import Event, RLock
 
 import oxipng
 import pillow_heif
 import pyjpegli
-from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageCms, ImageFile, ImageOps, UnidentifiedImageError
 
+from .budget import fill_quality_gap, fit_quality, fit_scale
 from .models import Asset, CompressionError, Encoded, Settings, check_cancel
 
 pillow_heif.register_heif_opener(thumbnails=False)
+JPEG_BUFFER_LOCK = RLock()
 
 INPUT_EXTENSIONS = frozenset(
     ".png .jpg .jpeg .jpe .heic .heif .tif .tiff .pdf .bmp .dib .webp .avif "
@@ -307,19 +309,30 @@ def encode_pixels(
         kwargs["exif"] = _exif(dpi)
     if fmt == "jpeg":
         im = im.convert("L" if im.mode in {"1", "L"} else "RGB")
-        kwargs.update(quality=quality, optimize=True, progressive=True, subsampling=0, dpi=dpi)
+        kwargs.update(quality=quality, optimize=True, progressive=False, subsampling=0, dpi=dpi)
     elif fmt == "png":
-        kwargs.update(optimize=True, compress_level=9, dpi=dpi)
+        kwargs.update(optimize=False, compress_level=3, dpi=dpi)
     elif fmt == "webp":
         kwargs.update(quality=quality, method=6, lossless=settings.content == "artwork", exact=True)
     elif fmt == "avif":
         kwargs.update(quality=quality, speed=6, subsampling="4:4:4", max_threads=2)
     elif fmt == "tiff":
         kwargs.update(compression="group4" if im.mode == "1" else "tiff_adobe_deflate", dpi=dpi)
-    im.save(stream, format={"tiff": "TIFF", "jpeg": "JPEG"}.get(fmt, fmt.upper()), **kwargs)
+    if fmt == "jpeg":
+        # Pillow underestimates the optimized 4:4:4 buffer for detailed photos.
+        # Scope the larger buffer to this encode, including concurrent API callers.
+        with JPEG_BUFFER_LOCK:
+            previous = ImageFile.MAXBLOCK
+            try:
+                ImageFile.MAXBLOCK = max(previous, im.width * im.height * 4)
+                im.save(stream, "JPEG", **kwargs)
+            finally:
+                ImageFile.MAXBLOCK = previous
+    else:
+        im.save(stream, format={"tiff": "TIFF"}.get(fmt, fmt.upper()), **kwargs)
     data = stream.getvalue()
     if fmt == "png" and optimize_png:
-        optimized = oxipng.optimize_from_memory(data, level=2, optimize_alpha=False, timeout=5)
+        optimized = oxipng.optimize_from_memory(data, level=1, optimize_alpha=False, timeout=3)
         if len(optimized) < len(data):
             data = optimized
     return data
@@ -365,6 +378,7 @@ def compress_image(
             details=f"{fmt.upper()} · 이미 용량 상한 이내여서 원본 데이터 유지",
         )
     im, notes = load_image(asset, frame)
+    resized_cache = None
     try:
         if asset.has_alpha and fmt == "jpeg":
             notes.append("JPEG는 투명도를 지원하지 않아 흰 배경으로 저장합니다.")
@@ -386,20 +400,20 @@ def compress_image(
         min_scale = 1 / max(im.size)
 
         def candidate(scale: float, quality: int) -> Encoded:
+            nonlocal resized_cache
             check_cancel(cancel)
             size = (
                 max(1, math.floor(im.width * scale + 1e-7)),
                 max(1, math.floor(im.height * scale + 1e-7)),
             )
-            resized = resize_to(im, size)
+            if resized_cache is None or resized_cache.size != size:
+                if resized_cache is not None and resized_cache is not im:
+                    resized_cache.close()
+                resized_cache = resize_to(im, size)
             dpi = size[0] / inches[0], size[1] / inches[1]
-            try:
-                data = encode_pixels(
-                    resized, fmt, quality, dpi, settings, optimize_png=settings.mode != "size"
-                )
-            finally:
-                if resized is not im:
-                    resized.close()
+            # Size mode searches the final PNG encoding, including optimization.
+            # It must not shrink the chosen output after deciding its resolution.
+            data = encode_pixels(resized_cache, fmt, quality, dpi, settings)
             return Encoded(
                 data,
                 EXTENSIONS[fmt],
@@ -407,10 +421,11 @@ def compress_image(
                 *dpi,
                 quality if lossy else None,
                 list(notes),
-                details=f"{fmt.upper()} · {settings.jpeg_engine if fmt == 'jpeg' else 'lossless' if not lossy else 'lossy'}",
+                details=f"{fmt.upper()} · {'사진 압축' if lossy else '무손실'}",
             )
 
-        result = candidate(max_scale, settings.quality)
+        floor = settings.min_quality if lossy else settings.quality
+        result = candidate(max_scale, floor if settings.mode == "size" else settings.quality)
         if (
             asset.frames == 1
             and asset.orientation == 1
@@ -424,46 +439,26 @@ def compress_image(
             result.data = asset.path.read_bytes()
             result.quality = None
             result.details = f"{fmt.upper()} · 기존 파일이 더 효율적이어서 원본 데이터 유지"
-        if settings.mode == "size" and result.size_bytes > settings.max_bytes:
-            # Resolution first: retain the largest image that fits at the quality floor,
-            # then spend any remaining bytes on quality. Each trial uses original pixels.
-            low_quality = settings.min_quality if lossy else settings.quality
-            at_floor = candidate(1.0, low_quality) if lossy else result
-            if at_floor.size_bytes <= settings.max_bytes:
-                best, scale = at_floor, 1.0
-            else:
-                at_min = candidate(min_scale, low_quality)
-                if at_min.size_bytes > settings.max_bytes:
-                    at_min.target_met = False
-                    at_min.warnings.append(
-                        "1픽셀까지 축소해도 파일 헤더·색상 프로파일이 용량 상한보다 큽니다. 용량 상한을 늘려주세요."
-                    )
-                    return at_min
-                best, scale, lo, hi = at_min, min_scale, min_scale, 1.0
-                for _ in range(8):
-                    mid = (lo + hi) / 2
-                    trial = candidate(mid, low_quality)
-                    if trial.size_bytes <= settings.max_bytes:
-                        best, scale, lo = trial, mid, mid
-                    else:
-                        hi = mid
-            if lossy:
-                lo_q, hi_q = low_quality + 1, settings.quality
-                while lo_q <= hi_q:
-                    q = (lo_q + hi_q) // 2
-                    trial = candidate(scale, q)
-                    if trial.size_bytes <= settings.max_bytes:
-                        best, lo_q = trial, q + 1
-                    else:
-                        hi_q = q - 1
-            result = best
-        if settings.mode == "size" and fmt == "png":
-            check_cancel(cancel)
-            optimized = oxipng.optimize_from_memory(
-                result.data, level=2, optimize_alpha=False, timeout=5
+        if settings.mode == "size":
+            result, scale = fit_scale(
+                lambda value: candidate(value, floor), result, settings.max_bytes, min_scale
             )
-            if len(optimized) < result.size_bytes:
-                result.data = optimized
+            if not result.target_met:
+                result.warnings.append(
+                    "1픽셀까지 축소해도 파일 헤더·색상 프로파일이 용량 상한보다 큽니다. 용량 상한을 늘려주세요."
+                )
+                return result
+            if lossy:
+                result = fit_quality(
+                    lambda q: candidate(scale, q), result, floor, settings.max_bytes
+                )
+                result = fill_quality_gap(candidate, result, scale, settings.max_bytes)
+            result.details += f" · 상한의 {result.size_bytes / settings.max_bytes:.1%} 사용"
+            if (
+                result.width,
+                result.height,
+            ) == im.size and result.size_bytes < settings.max_bytes * 0.985:
+                result.details += " · 원본 해상도 유지" if lossy else " · 원본 해상도, 무손실"
         if min(result.dpi_x, result.dpi_y) < 299.5:
             result.warnings.append(
                 "출력 해상도가 300 DPI 미만입니다. 인쇄 크기와 제출 기준을 확인하세요."
@@ -479,6 +474,8 @@ def compress_image(
         check_cancel(cancel)
         return result
     finally:
+        if resized_cache is not None and resized_cache is not im:
+            resized_cache.close()
         im.close()
 
 
@@ -501,8 +498,82 @@ def quick_estimate(asset: Asset, settings: Settings) -> tuple[float | None, int,
     return (
         dpi * ratio,
         int(asset.size_bytes * ratio * ratio),
-        "빠른 추정 · 실제 결과와 다를 수 있음",
+        "빠른 추정 · 원본 용량 기준",
     )
+
+
+def preview_source(asset: Asset, edge: int = 900) -> tuple[bytes, bytes]:
+    """One deferred decode supplies a thumbnail and small full-detail sample tiles."""
+    if asset.is_pdf:
+        return thumbnail(asset, edge), b""
+    with Image.open(asset.path) as source:
+        source.load()
+        sample_data = b""
+        if source.mode in {"RGB", "RGBA", "L", "LA", "P"}:
+            mode = "RGBA" if asset.has_alpha else "RGB"
+            tile = min(160, source.width // 2, source.height // 2)
+            if tile >= 16:
+                sample = Image.new(mode, (tile * 2, tile * 2))
+                for index, (fx, fy) in enumerate(((0.2, 0.2), (0.8, 0.2), (0.2, 0.8), (0.8, 0.8))):
+                    x = int((source.width - tile) * fx)
+                    y = int((source.height - tile) * fy)
+                    with source.crop((x, y, x + tile, y + tile)) as crop:
+                        sample.paste(crop.convert(mode), ((index % 2) * tile, (index // 2) * tile))
+                stream = io.BytesIO()
+                sample.save(stream, "PNG", compress_level=1)
+                sample_data = stream.getvalue()
+                sample.close()
+        source.thumbnail((edge, edge), Image.Resampling.LANCZOS, reducing_gap=2.0)
+        with ImageOps.exif_transpose(source) as oriented:
+            with oriented.convert("RGBA" if asset.has_alpha else "RGB") as im:
+                stream = io.BytesIO()
+                im.save(stream, "PNG", compress_level=1)
+                return stream.getvalue(), sample_data
+
+
+def sample_estimate(asset: Asset, settings: Settings, sample: bytes, cancel=None):
+    """Estimate from unscaled image content, not the input file's compression ratio.
+
+    Sampling is deliberately approximate: it never writes an output or replaces
+    the actual-byte check in compress_image. Full calculation stays user initiated.
+    """
+    if not sample or asset.is_pdf or settings.mode != "size":
+        return quick_estimate(asset, settings)
+    fmt = select_format(asset, settings)
+    if (
+        fmt == asset.format.lower().replace("jpg", "jpeg")
+        and asset.size_bytes <= settings.max_bytes
+    ):
+        dpi = min(asset.width / asset.inches(settings)[0], asset.height / asset.inches(settings)[1])
+        return dpi, asset.size_bytes, "빠른 추정 · 원본이 이미 상한 이내"
+    with Image.open(io.BytesIO(sample)) as im:
+        im.load()
+        # Carry the source ICC length separately when actual output is calculated.
+        ratio = asset.width * asset.height / (im.width * im.height)
+        floor = settings.min_quality
+
+        def candidate(scale):
+            check_cancel(cancel)
+            size = max(1, round(im.width * scale)), max(1, round(im.height * scale))
+            resized = resize_to(im, size)
+            try:
+                data = encode_pixels(resized, fmt, floor, (72, 72), settings, optimize_png=False)
+                return Encoded(data, EXTENSIONS[fmt], *size)
+            finally:
+                if resized is not im:
+                    resized.close()
+
+        minimum = candidate(1 / max(im.size)).size_bytes
+        budget = max(minimum + 1, round((settings.max_bytes - minimum) / ratio + minimum))
+        best, scale = fit_scale(candidate, candidate(1), budget, 1 / max(im.size))
+        width_in, height_in = asset.inches(settings)
+        dpi = min(asset.width / width_in, asset.height / height_in) * scale
+        predicted = round(max(0, best.size_bytes - minimum) * ratio + minimum)
+        return (
+            dpi,
+            min(settings.max_bytes, predicted),
+            "빠른 추정 · 이미지 표본 기준, 실제 결과와 차이 가능",
+        )
 
 
 def thumbnail(asset: Asset, edge: int = 1000) -> bytes:

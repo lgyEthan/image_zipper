@@ -45,10 +45,12 @@ def test_gui_estimate_latest_settings_and_export(png, tmp_path, app):
         spin(app, lambda: window.estimator is None)
         assert "시험 압축:" in window.estimate_detail.text(), window.estimate_detail.text()
         assert "150 DPI" in window.metric_label.text()
+        cached_bytes = window.trial_cache.path.read_bytes()
         window.destination.setText(str(tmp_path / "exports"))
         window._export()
         spin(app, lambda: window.exporter is None)
-        assert list((tmp_path / "exports").glob("*.jpg"))
+        assert list((tmp_path / "exports").glob("*.jpg"))[0].read_bytes() == cached_bytes
+        assert not list((tmp_path / "exports").glob("*.json"))
         assert "1개 저장" in window.status.text()
     finally:
         if window.estimator:
@@ -83,7 +85,10 @@ def dispose(window, app):
     spin(
         app,
         lambda: (
-            all(w is None for w in (window.estimator, window.previewer, window.exporter))
+            all(
+                w is None
+                for w in (window.estimator, window.previewer, window.sampler, window.exporter)
+            )
             and not window.loaders
         ),
     )
@@ -183,7 +188,7 @@ def crash_export(connection, kind, assets, settings, cancel, **options):
 
 
 def crash_after_completion(connection, kind, assets, settings, cancel, **options):
-    connection.send(("completed", [], [], "", False))
+    connection.send(("completed", [], [], False))
     connection.send(("done",))
     os._exit(73)
 
@@ -220,7 +225,7 @@ def test_export_cancelled_before_start_emits_completion(png, tmp_path, app):
     worker.cancel.set()
     worker.start()
     spin(app, lambda: not worker.isRunning())
-    assert completed == [([], [], "", True)]
+    assert completed == [([], [], True)]
     assert not (tmp_path / "exports").exists()
 
 
@@ -236,13 +241,14 @@ def test_estimated_size_can_exceed_two_gibibytes(app):
     assert received == [(1, result, 3 * 1024**3, b"")]
 
 
-def test_selection_contrast_on_dark_host_palette(app):
+@pytest.mark.parametrize("dark_mode", [False, True])
+def test_selection_contrast_on_dark_host_palette(app, dark_mode):
     dark = QPalette()
     dark.setColor(QPalette.ColorRole.Base, QColor("#111111"))
     dark.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
     dark.setColor(QPalette.ColorRole.HighlightedText, QColor("#111111"))
     app.setPalette(dark)
-    configure_theme(app)
+    configure_theme(app, dark=dark_mode)
 
     def luminance(color):
         channels = [color.redF(), color.greenF(), color.blueF()]

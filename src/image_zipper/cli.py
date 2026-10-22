@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .imaging import discover, probe
 from .models import CompressionError, Settings
-from .service import measure, save_asset, save_merged, save_report
+from .service import measure, save_asset, save_merged
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,8 +98,11 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception as exc:
                     errors.append(f"{asset.path.name}: {exc}")
         if not args.estimate:
-            report = save_report(args.output, results, errors)
-            print(f"{len(results)}개 저장 · 결과 보고서: {report}")
+            for result in results:
+                print(f"저장: {result.output}")
+                for warning in result.warnings:
+                    print(f"  {warning}")
+            print(f"{len(results)}개 저장 · {len(errors)}개 오류")
     except (CompressionError, OSError, ValueError) as exc:
         errors.append(str(exc))
     for error in errors:

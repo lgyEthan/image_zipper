@@ -151,7 +151,7 @@ def main() -> None:
             patch << 16,
         ):
             raise RuntimeError("Windows executable version does not match the application")
-    report = ROOT / "dist" / "self-test.json"
+    report = ROOT / "build" / "self-test.json"
     check_env = dict(env, QT_QPA_PLATFORM="offscreen")
     for _ in range(3):
         completed = subprocess.run(

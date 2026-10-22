@@ -3,16 +3,30 @@
 from __future__ import annotations
 
 
-def run_job(connection, kind, assets, settings, cancel, folder=None, merge_name=None):
-    from .imaging import preview_encoded, thumbnail
-    from .models import Cancelled, check_cancel
+def run_job(
+    connection,
+    kind,
+    assets,
+    settings,
+    cancel,
+    folder=None,
+    merge_name=None,
+    sample=None,
+    cache_path=None,
+    cached=None,
+):
+    from .imaging import preview_encoded, preview_source, sample_estimate
+    from .models import Cancelled, TrialCache, check_cancel, source_fingerprints
     from .pdf import merge_pdf
-    from .service import measure, save_asset, save_merged, save_report
+    from .service import measure, save_asset, save_merged
 
     try:
         if kind == "preview":
-            connection.send(("preview", thumbnail(assets[0], edge=900)))
+            connection.send(("preview", *preview_source(assets[0], edge=900)))
+        elif kind == "sample":
+            connection.send(("sample", *sample_estimate(assets[0], settings, sample, cancel)))
         elif kind in {"estimate", "estimate_merge"}:
+            fingerprints = source_fingerprints(assets)
             result = (
                 merge_pdf(assets, settings, cancel)
                 if kind == "estimate_merge"
@@ -22,10 +36,20 @@ def run_job(connection, kind, assets, settings, cancel, folder=None, merge_name=
             preview = preview_encoded(result, edge=900)
             # Transfer metrics and a thumbnail, not a second copy of a large output.
             size = result.size_bytes
+            trial = None
+            if (
+                cache_path is not None
+                and result.target_met
+                and fingerprints == source_fingerprints(assets)
+            ):
+                cache_path.write_bytes(result.data)
+                trial = TrialCache(
+                    cache_path, settings, fingerprints, kind == "estimate_merge", result, size
+                )
             result.data = b""
-            connection.send(("estimate", result, size, preview))
+            connection.send(("estimate", result, size, preview, trial))
         elif kind == "export":
-            results, errors, cancelled, report = [], [], False, ""
+            results, errors, cancelled = [], [], False
 
             def saved(result):
                 results.append(result)
@@ -36,13 +60,17 @@ def run_job(connection, kind, assets, settings, cancel, folder=None, merge_name=
 
             try:
                 if merge_name is not None:
-                    saved(save_merged(assets, settings, folder, merge_name, cancel, progress))
+                    saved(
+                        save_merged(
+                            assets, settings, folder, merge_name, cancel, progress, cached=cached
+                        )
+                    )
                 else:
                     for index, asset in enumerate(assets):
                         check_cancel(cancel)
                         progress(index, len(assets), asset.path.name)
                         try:
-                            save_asset(asset, settings, folder, cancel, saved)
+                            save_asset(asset, settings, folder, cancel, saved, cached=cached)
                         except Cancelled:
                             raise
                         except Exception as exc:
@@ -53,19 +81,7 @@ def run_job(connection, kind, assets, settings, cancel, folder=None, merge_name=
             except Exception as exc:
                 errors.append(str(exc))
                 connection.send(("error", errors[-1]))
-            if results or errors:
-                try:
-                    report = str(
-                        save_report(
-                            folder,
-                            results,
-                            errors + (["사용자가 취소했습니다."] if cancelled else []),
-                        )
-                    )
-                except Exception as exc:
-                    errors.append(f"결과 보고서를 저장할 수 없습니다: {exc}")
-                    connection.send(("error", errors[-1]))
-            connection.send(("completed", results, errors, report, cancelled))
+            connection.send(("completed", results, errors, cancelled))
     except Cancelled:
         pass
     except Exception as exc:

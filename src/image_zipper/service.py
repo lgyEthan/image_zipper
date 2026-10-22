@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -13,6 +12,7 @@ from .models import (
     Encoded,
     SavedResult,
     Settings,
+    TrialCache,
     check_cancel,
     human_bytes,
 )
@@ -73,11 +73,13 @@ def save_asset(
     folder: Path,
     cancel: Event | None = None,
     on_saved=None,
+    cached: TrialCache | None = None,
 ) -> list[SavedResult]:
     results = []
+    cached_result = cached.read([asset], settings, False) if cached else None
     for frame in range(1 if asset.is_pdf else asset.frames):
         check_cancel(cancel)
-        result = (
+        result = cached_result or (
             compress_pdf(asset.path, settings, cancel)
             if asset.is_pdf
             else compress_image(asset, settings, cancel, frame)
@@ -104,10 +106,13 @@ def save_merged(
     name: str,
     cancel: Event | None = None,
     progress=None,
+    cached: TrialCache | None = None,
 ) -> SavedResult:
     if Path(name).name != name or name in {"", ".", ".."}:
         raise CompressionError("병합 파일 이름에는 폴더 경로를 넣을 수 없습니다.")
-    result = merge_pdf(assets, settings, cancel, progress)
+    result = (cached.read(assets, settings, True) if cached else None) or merge_pdf(
+        assets, settings, cancel, progress
+    )
     require_target(result)
     check_cancel(cancel)
     stem = Path(name).stem if name.lower().endswith(".pdf") else name
@@ -119,27 +124,4 @@ def save_merged(
         result.size_bytes,
         result.dpi_x,
         result.warnings,
-    )
-
-
-def save_report(folder: Path, results: list[SavedResult], errors: list[str]) -> Path:
-    payload = {
-        "outputs": [
-            {
-                "source": str(r.source),
-                "output": str(r.output),
-                "input_bytes": r.before_bytes,
-                "output_bytes": r.after_bytes,
-                "effective_dpi": r.dpi,
-                "warnings": r.warnings,
-            }
-            for r in results
-        ],
-        "errors": errors,
-    }
-    return atomic_output(
-        folder,
-        "image_zipper_report",
-        ".json",
-        json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
     )

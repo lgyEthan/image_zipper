@@ -60,9 +60,13 @@ def test_target_size_is_measured_and_no_generation_cascade(png):
 
 
 def test_impossible_target_does_not_write(png, tmp_path):
-    asset = probe(png)
-    # JPEG headers plus this image's real ICC profile exceed this tiny budget,
-    # even with a 1x1 image. Failure must never be due to a DPI floor.
+    # A valid ICC profile can include trailing alignment/padding. Make its
+    # declared size alone exceed the cap, regardless of JPEG header efficiency.
+    with Image.open(png) as source:
+        profile = source.info["icc_profile"] + bytes(2048)
+        profile = len(profile).to_bytes(4, "big") + profile[4:]
+        source.save(tmp_path / "large-profile.png", icc_profile=profile)
+    asset = probe(tmp_path / "large-profile.png")
     settings = Settings(mode="size", max_bytes=1024, output_format="jpeg", jpeg_engine="pillow")
     assert not compress_image(asset, settings).target_met
     with pytest.raises(CompressionError, match="목표 용량"):

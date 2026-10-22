@@ -59,7 +59,6 @@ jobs:
           path: |
             dist/*.zip
             dist/*.sha256
-            dist/self-test.json
           if-no-files-found: error
           retention-days: 30
       - name: Upload failure diagnostics
@@ -68,6 +67,6 @@ jobs:
         with:
           name: diagnostics-${{ matrix.name }}
           path: |
-            dist/self-test.json
+            build/self-test.json
             build/ImageZipper/warn-ImageZipper.txt
           if-no-files-found: ignore

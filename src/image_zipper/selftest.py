@@ -95,10 +95,10 @@ def run(report_path: Path) -> int:
             window._export()
             wait_for(lambda: window.exporter is None)
             outputs = list((root / "output").glob("*.jpg"))
-            if len(outputs) != 1 or outputs[0].stat().st_size > round(0.008 * 1024 * 1024):
+            if len(outputs) != 1 or outputs[0].stat().st_size > 8000:
                 raise RuntimeError("GUI export failed its byte budget")
             record("GUI_export_process")
-            wait_for(lambda: window.previewer is None)
+            wait_for(lambda: window.previewer is None and window.sampler is None)
         window.close()
         window.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

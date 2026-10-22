@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import multiprocessing
 import sys
+import tempfile
 from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QEvent, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -39,82 +49,8 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .imaging import INPUT_EXTENSIONS, quick_estimate
 from .models import Asset, CompressionError, Settings, human_bytes
-from .workers import Estimator, Exporter, Loader, Previewer
-
-STYLESHEET = """
-QWidget { color: #243b48; font-size: 13px; }
-QMainWindow, #workspace { background: #f4f6f8; }
-QLabel { background: transparent; }
-QLabel#brand { font-size: 13px; font-weight: 700; color: #087f78; letter-spacing: 2px; }
-QLabel#heading { font-size: 28px; font-weight: 700; color: #172f3c; }
-QLabel#subtitle, QLabel#muted { color: #526976; }
-QLabel#section { font-size: 17px; font-weight: 700; }
-QLabel#metric { font-size: 23px; font-weight: 700; color: #087f78; }
-QLabel#badge { background: #e5f3ee; color: #217060; border-radius: 12px; padding: 8px 14px; font-size: 11px; font-weight: 700; }
-QFrame#card { background: white; border: 1px solid #e0e6eb; border-radius: 14px; }
-QFrame#estimate { background: #eff8f5; border: 1px solid #d8ebe4; border-radius: 12px; }
-QLabel#dropTitle { font-size: 21px; font-weight: 600; color: #45616f; }
-QPushButton { background: white; border: 1px solid #d7e0e5; padding: 9px 14px; border-radius: 8px; font-weight: 600; }
-QPushButton:hover { background: #edf6f4; border-color: #80b7ab; }
-QPushButton:pressed { background: #dcefe9; }
-QPushButton:disabled { color: #aab6bf; background: #f5f7f8; border-color: #e8edef; }
-QPushButton#primary { background: #087f78; border: 1px solid #087f78; color: white; padding: 13px 25px; }
-QPushButton#primary:hover { background: #066e68; }
-QPushButton#primary:disabled { background: #9ebdb8; border-color: #9ebdb8; color: white; }
-QPushButton#subtle { border: none; background: transparent; color: #647b89; padding: 6px 10px; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { color: #243b48; background: #fbfcfd; border: 1px solid #d7e0e5; border-radius: 7px; padding: 7px; min-height: 20px; selection-background-color: #096b65; selection-color: #ffffff; }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: #087f78; }
-QComboBox::drop-down { border: none; width: 24px; }
-QComboBox::down-arrow { image: url("ASSET_ROOT/chevron.svg"); width: 12px; height: 8px; }
-QCheckBox { spacing: 8px; }
-QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #b9c9cf; border-radius: 3px; background: white; }
-QCheckBox::indicator:checked { border-color: #087f78; background: #087f78; image: url("ASSET_ROOT/check.svg"); }
-QComboBox QAbstractItemView { color: #243b48; background: white; border: 1px solid #bcced2; padding: 4px; selection-background-color: #096b65; selection-color: #ffffff; outline: 0; }
-QComboBox QAbstractItemView::item { min-height: 28px; padding: 4px 8px; }
-QComboBox QAbstractItemView::item:selected { background: #096b65; color: #ffffff; }
-QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled { color: #a4b1ba; background: #f3f5f7; }
-QTableWidget { border: none; background: white; gridline-color: #eff2f5; selection-background-color: #096b65; selection-color: #ffffff; outline: 0; }
-QTableWidget::item { padding: 10px 8px; border-bottom: 1px solid #eff2f5; }
-QTableWidget::item:selected, QTableWidget::item:selected:!active { background: #096b65; color: #ffffff; }
-QHeaderView::section { background: #f7f9fa; color: #526976; border: none; padding: 11px 8px; font-size: 11px; font-weight: 600; }
-QScrollArea { border: none; background: transparent; }
-QScrollBar:vertical { background: #f1f4f6; width: 8px; border: 0; }
-QScrollBar::handle:vertical { background: #c4d1d7; border-radius: 4px; min-height: 35px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QProgressBar { border: none; border-radius: 3px; background: #e4eaee; min-height: 5px; max-height: 5px; }
-QProgressBar::chunk { background: #087f78; border-radius: 3px; }
-QPlainTextEdit { color: #243b48; border: 1px solid #e0e6eb; background: #fbfcfd; border-radius: 8px; padding: 6px; selection-background-color: #096b65; selection-color: #ffffff; }
-QToolTip { background: #213b48; color: white; border: 0; padding: 6px; }
-""".replace("ASSET_ROOT", (Path(__file__).parent / "assets").as_posix())
-
-
-def configure_theme(app: QApplication) -> None:
-    """Use a complete light palette, including inactive selection on dark OS themes."""
-    app.setStyle("Fusion")
-    palette = QPalette()
-    for group in (
-        QPalette.ColorGroup.Active,
-        QPalette.ColorGroup.Inactive,
-        QPalette.ColorGroup.Disabled,
-    ):
-        for role, color in {
-            QPalette.ColorRole.Window: "#f4f6f8",
-            QPalette.ColorRole.WindowText: "#243b48",
-            QPalette.ColorRole.Base: "#ffffff",
-            QPalette.ColorRole.AlternateBase: "#f7f9fa",
-            QPalette.ColorRole.Text: "#243b48",
-            QPalette.ColorRole.Button: "#ffffff",
-            QPalette.ColorRole.ButtonText: "#243b48",
-            QPalette.ColorRole.Highlight: "#096b65",
-            QPalette.ColorRole.HighlightedText: "#ffffff",
-            QPalette.ColorRole.PlaceholderText: "#617683",
-            QPalette.ColorRole.ToolTipBase: "#213b48",
-            QPalette.ColorRole.ToolTipText: "#ffffff",
-            QPalette.ColorRole.Link: "#087f78",
-        }.items():
-            palette.setColor(group, role, QColor(color))
-    app.setPalette(palette)
-    app.setStyleSheet(STYLESHEET)
+from .theme import configure_theme
+from .workers import Estimator, Exporter, Loader, Previewer, SampleEstimator
 
 
 def label(text: str, name: str = "", wrap: bool = False) -> QLabel:
@@ -131,13 +67,29 @@ def app_icon() -> QIcon:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#087f78"))
+    painter.setBrush(QColor("#087be8"))
     painter.drawRoundedRect(4, 4, 120, 120, 28, 28)
-    painter.setBrush(QColor("#f0fffa"))
+    painter.setBrush(QColor("#ffffff"))
     painter.drawRoundedRect(28, 29, 72, 70, 9, 9)
-    painter.setBrush(QColor("#087f78"))
+    painter.setBrush(QColor("#087be8"))
     for y in range(36, 93, 11):
         painter.drawRect(58 if (y // 11) % 2 else 65, y, 10, 7)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def document_icon(size=64) -> QIcon:
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor("#8e8e93"), 2.2))
+    painter.drawRoundedRect(6, 10, size - 12, size - 20, 7, 7)
+    painter.drawEllipse(16, 20, 7, 7)
+    painter.drawLine(10, size - 17, 27, 32)
+    painter.drawLine(27, 32, 38, 43)
+    painter.drawLine(38, 43, 46, 35)
+    painter.drawLine(46, 35, size - 8, size - 22)
     painter.end()
     return QIcon(pixmap)
 
@@ -147,9 +99,9 @@ class Preview(QLabel):
         super().__init__(text)
         self.source = QPixmap()
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumSize(100, 130)
+        self.setMinimumSize(100, 110)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
-        self.setStyleSheet("background: #f3f5f7; color: #8a9ba6; border-radius: 9px;")
+        self.setObjectName("preview")
 
     def set_image(self, data: bytes):
         self.source.loadFromData(data)
@@ -178,10 +130,10 @@ class Preview(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"Image Zipper · {__version__}")
+        self.setWindowTitle("Image Zipper")
         self.setWindowIcon(app_icon())
-        self.resize(1320, 940)
-        self.setMinimumSize(1050, 740)
+        self.resize(1200, 820)
+        self.setMinimumSize(1040, 700)
         self.setAcceptDrops(True)
         self.assets: list[Asset] = []
         self.asset_paths: set[Path] = set()
@@ -192,6 +144,11 @@ class MainWindow(QMainWindow):
         self.preview_asset: Asset | None = None
         self.estimator: Estimator | None = None
         self.exporter: Exporter | None = None
+        self.sampler = None
+        self.sample_cache = {}
+        self.measured_revision = None
+        self.trial_cache = None
+        self.trial_directory = tempfile.TemporaryDirectory(prefix="image-zipper-preview-")
         self.revision = 0
         self.closing = False
         self.debounce = QTimer(self)
@@ -206,104 +163,100 @@ class MainWindow(QMainWindow):
         root = QWidget()
         root.setObjectName("workspace")
         self.setCentralWidget(root)
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(28, 22, 28, 20)
-        outer.setSpacing(18)
+        outer = QHBoxLayout(root)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(0)
 
-        header = QHBoxLayout()
-        titles = QVBoxLayout()
-        titles.setSpacing(5)
-        titles.addWidget(label("IMAGE ZIPPER", "brand"))
-        titles.addWidget(label("필요한 품질로, 더 가볍게.", "heading"))
-        titles.addWidget(label("이미지 일괄 축소부터 출판용 PDF까지, 내 컴퓨터에서.", "subtitle"))
-        header.addLayout(titles)
-        header.addStretch()
-        badge = label("●  LOCAL & OFFLINE", "badge")
-        header.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
-        outer.addLayout(header)
-
-        body = QHBoxLayout()
-        body.setSpacing(20)
         self.settings_card = QFrame()
-        self.settings_card.setObjectName("card")
-        self.settings_card.setFixedWidth(330)
+        self.settings_card.setObjectName("sidebar")
+        self.settings_card.setFixedWidth(266)
         side_outer = QVBoxLayout(self.settings_card)
         side_outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         side = QWidget()
-        side.setStyleSheet("background: transparent;")
         controls = QVBoxLayout(side)
-        controls.setContentsMargins(22, 22, 22, 22)
-        controls.setSpacing(14)
-        controls.addWidget(label("01  출력 설정", "section"))
-        self.operation = QComboBox()
-        self.operation.addItems(["각 파일을 개별 저장", "하나의 PDF로 병합"])
-        controls.addWidget(self.operation)
-        self.preset = QComboBox()
-        self.preset.addItems(
-            [
-                "출판 · 사진",
-                "출판 · 도표  /  손실 코덱 사용 안 함",
-                "균형",
-                "작은 파일",
-            ]
-        )
-        controls.addWidget(label("품질 프리셋", "muted"))
-        controls.addWidget(self.preset)
+        controls.setContentsMargins(16, 20, 16, 16)
+        controls.setSpacing(10)
+        controls.addWidget(label("작업", "section"))
+        self.operation = QComboBox(self.settings_card)
+        self.operation.addItems(["이미지 압축", "PDF 병합"])
+        self.operation.hide()
+        self.navigation = []
+        for index, text in enumerate(("이미지 압축", "PDF 병합")):
+            button = QPushButton(text)
+            button.setObjectName("navigation")
+            button.setCheckable(True)
+            button.clicked.connect(
+                lambda checked=False, value=index: self.operation.setCurrentIndex(value)
+            )
+            self.navigation.append(button)
+            controls.addWidget(button)
+        controls.addSpacing(14)
+        controls.addWidget(label("크기 조절", "section"))
         self.mode = QComboBox()
-        for text, value in [
-            ("DPI 지정", "dpi"),
-            ("최대 파일 용량 지정", "size"),
-        ]:
-            self.mode.addItem(text, value)
-        controls.addWidget(label("크기 조절 기준", "muted"))
+        self.mode.addItem("DPI 지정", "dpi")
+        self.mode.addItem("최대 파일 크기", "size")
         controls.addWidget(self.mode)
-        form = self.target_form = QFormLayout()
-        form.setVerticalSpacing(10)
+        self.target_form = QFormLayout()
+        self.target_form.setVerticalSpacing(10)
         self.dpi = QSpinBox()
         self.dpi.setRange(1, 9600)
         self.dpi.setSuffix(" DPI")
         self.dpi.setValue(300)
         self.max_mib = QDoubleSpinBox()
-        self.max_mib.setRange(0.001, 100000)
+        self.max_mib.setRange(0.002, 100000)
         self.max_mib.setDecimals(3)
-        self.max_mib.setSuffix(" MiB")
+        self.max_mib.setSuffix(" MB")
         self.max_mib.setValue(2)
         self.max_mib.setToolTip(
-            "1 MiB = 1,048,576 bytes. 개별 저장은 출력 파일마다, 병합은 최종 PDF 전체에 적용합니다."
+            "1 MB = 1,000,000바이트. 개별 저장은 파일마다, PDF 병합은 전체에 적용합니다."
         )
-        form.addRow("목표 해상도", self.dpi)
-        form.addRow("용량 상한", self.max_mib)
-        controls.addLayout(form)
-        self.mode_help = label("", "muted", True)
+        self.target_form.addRow("해상도", self.dpi)
+        self.target_form.addRow("최대 용량", self.max_mib)
+        controls.addLayout(self.target_form)
+        self.mode_help = label("", "caption", True)
         controls.addWidget(self.mode_help)
+        controls.addSpacing(14)
+        controls.addWidget(label("출력", "section"))
         self.format = QComboBox()
-        for text, value in [
-            ("자동 · 입력 특성에 맞게", "auto"),
-            ("JPEG · 높은 호환성", "jpeg"),
-            ("PNG · 무손실 압축", "png"),
-            ("WebP · 작은 파일", "webp"),
-            ("AVIF · 고효율 압축", "avif"),
-            ("TIFF · 출판·보관", "tiff"),
-        ]:
+        for text, value in (
+            ("자동", "auto"),
+            ("JPEG", "jpeg"),
+            ("PNG", "png"),
+            ("WebP", "webp"),
+            ("AVIF", "avif"),
+            ("TIFF", "tiff"),
+        ):
             self.format.addItem(text, value)
-        controls.addWidget(label("이미지 출력 형식 · PDF는 PDF로 유지", "muted"))
-        controls.addWidget(self.format)
-        self.artwork = QCheckBox("도표 보호 · 손실 코덱 사용 안 함")
+        self.format.setToolTip("기존 PDF는 PDF로 저장합니다.")
+        self.preset = QComboBox()
+        self.preset.addItems(["사진 · 인쇄", "도표 · 인쇄", "균형", "작은 파일"])
+        output_form = QFormLayout()
+        output_form.setVerticalSpacing(10)
+        output_form.addRow("파일 형식", self.format)
+        output_form.addRow("품질", self.preset)
+        controls.addLayout(output_form)
+        self.artwork = QCheckBox("도표의 선과 색상 보존")
         self.artwork.setToolTip(
-            "PNG/TIFF 등의 무손실 코덱을 사용합니다. 픽셀 수를 줄이면 도표도 세부 정보가 줄어듭니다."
+            "손실 코덱을 사용하지 않습니다. 해상도를 낮추면 세부 정보는 줄어듭니다."
         )
         controls.addWidget(self.artwork)
-        controls.addWidget(label("02  인쇄 크기와 품질", "section"))
+        controls.addSpacing(14)
+        self.advanced_toggle = QPushButton("›  세부 설정")
+        self.advanced_toggle.setObjectName("subtle")
+        self.advanced_toggle.setCheckable(True)
+        controls.addWidget(self.advanced_toggle, 0, Qt.AlignmentFlag.AlignLeft)
+        self.advanced_panel = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_panel)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(10)
         self.print_width = QDoubleSpinBox()
         self.print_width.setRange(0, 10000)
-        self.print_width.setSpecialValueText("원본 정보 사용")
+        self.print_width.setSpecialValueText("원본 기준")
         self.print_width.setSuffix(" mm")
-        self.print_width.setToolTip(
-            "0이면 원본 DPI를 사용합니다. 너비를 지정하면 비율을 유지해 인쇄 크기를 계산합니다. 기존 PDF 페이지 크기는 바꾸지 않습니다."
-        )
+        self.print_width.setToolTip("인쇄할 너비를 지정하면 이 크기를 기준으로 DPI를 계산합니다.")
         self.reference = QSpinBox()
         self.reference.setRange(1, 9600)
         self.reference.setValue(300)
@@ -312,179 +265,209 @@ class MainWindow(QMainWindow):
         self.quality.setRange(1, 100)
         self.min_quality = QSpinBox()
         self.min_quality.setRange(1, 100)
-        advanced = self.advanced_form = QFormLayout()
-        advanced.setVerticalSpacing(10)
-        for text, widget in [
+        self.min_quality.setToolTip("용량 모드는 이 품질 이상에서 해상도와 품질을 자동 조절합니다.")
+        self.advanced_form = QFormLayout()
+        self.advanced_form.setVerticalSpacing(10)
+        for text, widget in (
             ("인쇄 너비", self.print_width),
-            ("DPI 정보 없을 때", self.reference),
-            ("인코더 품질", self.quality),
+            ("기본 DPI", self.reference),
+            ("압축 품질", self.quality),
             ("최소 품질", self.min_quality),
-        ]:
-            advanced.addRow(text, widget)
-        controls.addLayout(advanced)
+        ):
+            self.advanced_form.addRow(text, widget)
+        advanced_layout.addLayout(self.advanced_form)
         self.jpeg_engine = QComboBox()
-        self.jpeg_engine.addItem("Jpegli · 효율 우선 (4:2:0)", "jpegli")
-        self.jpeg_engine.addItem("JPEG · 색 디테일 보존 (4:4:4)", "pillow")
-        controls.addWidget(self.jpeg_engine)
-        controls.addWidget(
-            label(
-                "DPI = 픽셀 수 ÷ 인쇄 크기(inch)\n용량 모드는 품질과 픽셀 수를 자동 조절합니다. 인쇄 크기는 DPI 환산 기준입니다.",
-                "muted",
-                True,
+        self.jpeg_engine.addItem("Jpegli · 압축 효율", "jpegli")
+        self.jpeg_engine.addItem("JPEG · 색상 디테일", "pillow")
+        advanced_layout.addWidget(self.jpeg_engine)
+        advanced_layout.addWidget(
+            label("기본 DPI는 원본에 해상도 정보가 없을 때 사용합니다.", "caption", True)
+        )
+        self.advanced_panel.hide()
+        self.advanced_toggle.toggled.connect(self.advanced_panel.setVisible)
+        self.advanced_toggle.toggled.connect(
+            lambda opened: self.advanced_toggle.setText(
+                "⌄  세부 설정" if opened else "›  세부 설정"
             )
         )
+        controls.addWidget(self.advanced_panel)
         controls.addStretch()
+        controls.addWidget(label("원본 파일은 그대로 유지됩니다.", "caption"))
         scroll.setWidget(side)
         side_outer.addWidget(scroll)
-        body.addWidget(self.settings_card)
+        outer.addWidget(self.settings_card)
 
-        right = QVBoxLayout()
-        right.setSpacing(16)
+        main = QVBoxLayout()
+        main.setContentsMargins(20, 4, 4, 0)
+        main.setSpacing(12)
+        outer.addLayout(main, 1)
+        body = QSplitter(Qt.Orientation.Vertical)
+        body.setHandleWidth(10)
+        body.setChildrenCollapsible(False)
         self.queue_card = QFrame()
-        self.queue_card.setObjectName("card")
         queue_layout = QVBoxLayout(self.queue_card)
-        queue_layout.setContentsMargins(18, 16, 18, 12)
+        queue_layout.setContentsMargins(0, 0, 0, 0)
+        queue_layout.setSpacing(12)
         toolbar = QHBoxLayout()
-        self.queue_title = label("작업 목록  0", "section")
+        toolbar.setContentsMargins(0, 2, 0, 8)
+        self.queue_title = label("이미지 압축", "heading")
         toolbar.addWidget(self.queue_title)
         toolbar.addStretch()
-        self.add_files = QPushButton("＋ 파일 추가")
         self.add_folder = QPushButton("폴더 추가")
-        toolbar.addWidget(self.add_files)
+        self.add_files = QPushButton("＋ 파일 추가")
         toolbar.addWidget(self.add_folder)
+        toolbar.addWidget(self.add_files)
         queue_layout.addLayout(toolbar)
         self.stack = QStackedWidget()
         empty = QWidget()
         empty_layout = QVBoxLayout(empty)
+        empty_layout.setSpacing(12)
         empty_layout.addStretch()
-        icon = label("↘  ▧  ↙", "heading")
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.addWidget(icon)
-        empty_title = label("파일을 여기에 놓아주세요", "dropTitle")
-        empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.addWidget(empty_title)
-        formats = label("PNG · JPG · HEIC · TIFF · PDF · BMP · WebP · AVIF 외", "muted")
-        formats.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.addWidget(formats)
+        empty_icon = label("")
+        empty_icon.setPixmap(document_icon(64).pixmap(64, 64))
+        empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(empty_icon)
+        for text, name in (
+            ("이미지 또는 PDF 추가", "dropTitle"),
+            ("파일을 여기로 드래그하거나 ‘파일 추가’를 누르세요.", "muted"),
+            ("PNG · JPG · HEIC · TIFF · PDF · BMP · WebP · AVIF", "caption"),
+        ):
+            item = label(text, name)
+            item.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.addWidget(item)
         empty_layout.addStretch()
         self.stack.addWidget(empty)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["파일", "원본 크기", "픽셀 / 페이지", "원본 DPI", "예상 출력", "상태"]
+            ["파일", "원본 크기", "픽셀 / 페이지", "DPI", "출력 크기", "상태"]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setShowGrid(False)
         self.table.verticalHeader().hide()
-        self.table.verticalHeader().setDefaultSectionSize(49)
+        self.table.verticalHeader().setDefaultSectionSize(42)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column, width in enumerate((90, 130, 85, 95, 92), start=1):
+        for column, width in enumerate((90, 116, 75, 94, 88), start=1):
             self.table.horizontalHeader().setSectionResizeMode(
                 column, QHeaderView.ResizeMode.Interactive
             )
             self.table.setColumnWidth(column, width)
         self.stack.addWidget(self.table)
-        self.stack.setMinimumHeight(200)
+        self.stack.setMinimumHeight(160)
         queue_layout.addWidget(self.stack, 1)
-        queue_actions = QHBoxLayout()
-        self.up = QPushButton("↑")
-        self.down = QPushButton("↓")
-        self.remove = QPushButton("선택 제거")
-        self.clear_all = QPushButton("비우기")
+        actions = QHBoxLayout()
+        self.up, self.down = QPushButton("↑"), QPushButton("↓")
+        self.remove, self.clear_all = QPushButton("선택 제거"), QPushButton("모두 지우기")
         for button in (self.up, self.down, self.remove, self.clear_all):
             button.setObjectName("subtle")
-            queue_actions.addWidget(button)
-        self.up.setToolTip("선택 파일을 위로 이동 · PDF 병합 순서")
-        self.down.setToolTip("선택 파일을 아래로 이동 · PDF 병합 순서")
-        queue_actions.addStretch()
-        self.total = label("0 B", "muted")
-        queue_actions.addWidget(self.total)
-        queue_layout.addLayout(queue_actions)
-        right.addWidget(self.queue_card, 5)
+            actions.addWidget(button)
+        self.up.setToolTip("PDF 병합 순서를 위로 이동")
+        self.down.setToolTip("PDF 병합 순서를 아래로 이동")
+        actions.addStretch()
+        self.total = label("항목 없음", "caption")
+        actions.addWidget(self.total)
+        queue_layout.addLayout(actions)
+        body.addWidget(self.queue_card)
 
-        estimate_card = QFrame()
-        estimate_card.setObjectName("estimate")
-        estimate_layout = QVBoxLayout(estimate_card)
-        estimate_layout.setContentsMargins(18, 14, 18, 14)
+        self.inspector = QFrame()
+        self.inspector.setObjectName("inspector")
+        inspection = QVBoxLayout(self.inspector)
+        inspection.setContentsMargins(14, 12, 14, 14)
+        inspection.setSpacing(10)
         metrics = QHBoxLayout()
-        self.estimate_title = label("선택 파일 미리보기", "section")
+        self.estimate_title = label("선택 파일", "section")
+        self.metric_label = label("—", "metric")
+        self.measure_button = QPushButton("정확히 계산")
+        self.measure_button.setEnabled(False)
+        self.measure_button.setToolTip("시험 압축으로 최종 파일 크기와 DPI를 확인합니다.")
         metrics.addWidget(self.estimate_title)
         metrics.addStretch()
-        self.metric_label = label("—", "metric")
         metrics.addWidget(self.metric_label)
-        self.measure_button = QPushButton("정확히 계산")
-        self.measure_button.setToolTip(
-            "선택 파일을 실제로 시험 압축합니다. PDF 병합 모드에서는 전체 결과를 계산합니다."
-        )
-        self.measure_button.setEnabled(False)
+        metrics.addSpacing(8)
         metrics.addWidget(self.measure_button)
-        estimate_layout.addLayout(metrics)
-        self.estimate_detail = label(
-            "파일을 추가하면 용량과 실제 해상도를 계산합니다.", "muted", True
-        )
-        estimate_layout.addWidget(self.estimate_detail)
-        self.estimate_note = label("", "muted", True)
-        estimate_layout.addWidget(self.estimate_note)
-        right.addWidget(estimate_card)
-
-        previews = QSplitter(Qt.Orientation.Horizontal)
+        inspection.addLayout(metrics)
+        self.estimate_detail = label("", "muted", True)
+        self.estimate_note = label("", "caption", True)
+        inspection.addWidget(self.estimate_detail)
+        inspection.addWidget(self.estimate_note)
+        previews = QHBoxLayout()
+        previews.setSpacing(12)
         self.before, self.after = Preview("원본"), Preview("압축 후")
-        for title, view in (
-            ("원본 · 첫 페이지", self.before),
-            ("시험 압축 · 첫 페이지", self.after),
-        ):
-            container = QWidget()
-            layout = QVBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(6)
-            layout.addWidget(label(title, "muted"))
-            layout.addWidget(view)
-            previews.addWidget(container)
-        previews.setHandleWidth(14)
-        previews.setMinimumHeight(165)
-        right.addWidget(previews, 3)
-        body.addLayout(right, 1)
-        outer.addLayout(body, 1)
+        for title, view in (("원본", self.before), ("압축 결과", self.after)):
+            layout = QVBoxLayout()
+            layout.setSpacing(4)
+            layout.addWidget(label(title, "caption"))
+            layout.addWidget(view, 1)
+            previews.addLayout(layout, 1)
+        inspection.addLayout(previews, 1)
+        self.inspector.hide()
+        body.addWidget(self.inspector)
+        body.setSizes([420, 280])
+        main.addWidget(body, 1)
 
-        output = QHBoxLayout()
-        output.addWidget(label("저장 폴더", "muted"))
+        output = QFrame()
+        output.setObjectName("output")
+        output_layout = QHBoxLayout(output)
+        output_layout.setContentsMargins(10, 8, 10, 8)
+        output_layout.addWidget(label("저장 위치", "caption"))
         self.destination = QLineEdit()
-        self.destination.setPlaceholderText("출력 폴더를 선택하세요")
-        self.choose_folder = QPushButton("찾아보기")
-        self.open_folder = QPushButton("폴더 열기")
-        output.addWidget(self.destination, 1)
-        output.addWidget(self.choose_folder)
-        output.addWidget(self.open_folder)
+        self.destination.setPlaceholderText("파일을 추가하면 저장 폴더가 표시됩니다")
+        self.choose_folder, self.open_folder = QPushButton("변경…"), QPushButton("열기")
+        output_layout.addWidget(self.destination, 1)
+        output_layout.addWidget(self.choose_folder)
+        output_layout.addWidget(self.open_folder)
         self.merge_name = QLineEdit("merged.pdf")
-        self.merge_name.setMaximumWidth(200)
-        self.merge_name.setToolTip("병합한 PDF의 파일 이름")
+        self.merge_name.setMaximumWidth(150)
+        self.merge_name.setToolTip("병합할 PDF 파일 이름")
         self.merge_name.hide()
-        output.addWidget(self.merge_name)
-        outer.addLayout(output)
+        output_layout.addWidget(self.merge_name)
+        main.addWidget(output)
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
         self.progress.setValue(0)
-        outer.addWidget(self.progress)
+        self.progress.hide()
+        main.addWidget(self.progress)
         bottom = QHBoxLayout()
-        self.status = label("준비됨 · 원본 파일은 유지하고, 결과를 새 파일로 저장합니다.", "muted")
+        self.status = label("파일을 추가하세요", "caption")
+        self.status.setMinimumWidth(50)
         bottom.addWidget(self.status, 1)
         self.show_log = QPushButton("작업 기록")
+        self.show_log.setObjectName("subtle")
         self.cancel_button = QPushButton("취소")
         self.cancel_button.setEnabled(False)
-        self.export_button = QPushButton("압축해서 저장  →")
+        self.cancel_button.hide()
+        self.export_button = QPushButton("저장")
         self.export_button.setObjectName("primary")
         self.export_button.setEnabled(False)
-        bottom.addWidget(self.show_log)
-        bottom.addWidget(self.cancel_button)
-        bottom.addWidget(self.export_button)
-        outer.addLayout(bottom)
+        for widget in (self.show_log, self.cancel_button, self.export_button):
+            bottom.addWidget(widget)
+        main.addLayout(bottom)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMaximumHeight(120)
+        self.log.setMaximumHeight(110)
         self.log.hide()
-        outer.addWidget(self.log)
+        main.addWidget(self.log)
 
     def _connect(self):
+        file_menu = self.menuBar().addMenu("파일")
+        add_action = QAction("파일 추가…", self)
+        add_action.setShortcut(QKeySequence.StandardKey.Open)
+        add_action.triggered.connect(self._pick_files)
+        file_menu.addAction(add_action)
+        close_action = QAction("창 닫기", self)
+        close_action.setShortcut(QKeySequence.StandardKey.Close)
+        close_action.triggered.connect(self.close)
+        file_menu.addAction(close_action)
+        help_menu = self.menuBar().addMenu("도움말")
+        about = QAction("Image Zipper 정보", self)
+        about.setMenuRole(QAction.MenuRole.AboutRole)
+        about.triggered.connect(
+            lambda: QMessageBox.about(
+                self, "Image Zipper", f"Image Zipper {__version__}\n오프라인 이미지·PDF 압축"
+            )
+        )
+        help_menu.addAction(about)
         self.add_files.clicked.connect(self._pick_files)
         self.add_folder.clicked.connect(self._pick_input_folder)
         self.choose_folder.clicked.connect(self._pick_output)
@@ -508,7 +491,6 @@ class MainWindow(QMainWindow):
         ):
             widget.valueChanged.connect(self._settings_changed)
         self.artwork.toggled.connect(self._settings_changed)
-        self.quality.valueChanged.connect(self.min_quality.setMaximum)
         self.export_button.clicked.connect(self._export)
         self.cancel_button.clicked.connect(self._cancel_export)
         self.measure_button.clicked.connect(self._start_estimate)
@@ -517,7 +499,7 @@ class MainWindow(QMainWindow):
         settings = Settings(
             mode=self.mode.currentData(),
             target_dpi=self.dpi.value(),
-            max_bytes=round(self.max_mib.value() * 1024 * 1024),
+            max_bytes=round(self.max_mib.value() * 1_000_000),
             quality=self.quality.value(),
             min_quality=self.min_quality.value(),
             output_format="auto"
@@ -553,29 +535,36 @@ class MainWindow(QMainWindow):
 
     def _settings_changed(self):
         self.revision += 1
+        if self.sampler:
+            self.sampler.cancel.set()
         if self.estimator:
             self.estimator.cancel.set()
         merge = self.operation.currentIndex() == 1
+        for index, button in enumerate(self.navigation):
+            button.setChecked(index == int(merge))
+        self.queue_title.setText("PDF 병합" if merge else "이미지 압축")
         self.merge_name.setVisible(merge)
         self.format.setEnabled(not merge)
         is_size = self.mode.currentData() == "size"
         self.target_form.setRowVisible(self.dpi, not is_size)
         self.target_form.setRowVisible(self.max_mib, is_size)
+        self.advanced_form.setRowVisible(self.quality, not is_size and not self.artwork.isChecked())
         self.advanced_form.setRowVisible(self.min_quality, is_size and not self.artwork.isChecked())
         self.mode_help.setText(
-            "용량 상한에 맞춰 DPI를 자동 조절합니다. DPI 하한은 없습니다."
+            "해상도와 품질을 자동으로 조절합니다."
             if is_size
-            else "지정한 DPI로 픽셀 수를 줄입니다. 파일 용량은 제한하지 않습니다."
+            else "인쇄 크기를 유지하며 해상도를 조절합니다."
         )
         self.quality.setEnabled(not self.artwork.isChecked())
-        self.export_button.setText("PDF로 병합해서 저장  →" if merge else "압축해서 저장  →")
-        self.after.clear_image("‘정확히 계산’을 누르면 압축 결과를 표시합니다")
+        self.export_button.setText("PDF 저장" if merge else "저장")
+        self.after.clear_image("계산 후 표시")
         # Invalidate all previous measurements when settings or selection change.
         for row in range(self.table.rowCount()):
             self.table.item(row, 4).setText("—")
             if self.table.item(row, 5).text() in {"계산 완료", "용량 미달"}:
                 self.table.item(row, 5).setText("대기")
         asset = self.selected_asset()
+        self.inspector.setVisible(asset is not None)
         self.measure_button.setEnabled(asset is not None and not self.loaders and not self.exporter)
         if asset != self.preview_asset:
             self.preview_asset = asset
@@ -642,6 +631,7 @@ class MainWindow(QMainWindow):
         if asset in self.preview_cache:
             self.preview_cache.move_to_end(asset)
             self.before.set_image(self.preview_cache[asset])
+            self._start_sample()
             return
         self.previewer = Previewer(asset, self)
         self.previewer.ready.connect(self._preview_ready)
@@ -649,14 +639,49 @@ class MainWindow(QMainWindow):
         self.previewer.finished.connect(self._preview_finished)
         self.previewer.start()
 
-    def _preview_ready(self, asset, data):
+    def _preview_ready(self, asset, data, sample):
         if self.closing or asset.path not in self.asset_paths:
             return
         self.preview_cache[asset] = data
+        self.sample_cache[asset] = sample
         while len(self.preview_cache) > 12:
-            self.preview_cache.popitem(last=False)
+            expired, _ = self.preview_cache.popitem(last=False)
+            self.sample_cache.pop(expired, None)
         if self.selected_asset() == asset:
             self.before.set_image(data)
+            self._start_sample()
+
+    def _start_sample(self):
+        asset = self.selected_asset()
+        if (
+            self.closing
+            or self.exporter
+            or self.estimator
+            or self.sampler
+            or self.operation.currentIndex() == 1
+            or self.mode.currentData() != "size"
+            or self.measured_revision == self.revision
+            or not self.sample_cache.get(asset)
+        ):
+            return
+        self.sampler = SampleEstimator(
+            self.revision, asset, self.settings(), self.sample_cache[asset], self
+        )
+        self.sampler.ready.connect(self._sample_ready)
+        self.sampler.finished.connect(self._sample_finished)
+        self.sampler.start()
+
+    def _sample_ready(self, revision, dpi, size, note):
+        if revision == self.revision and self.measured_revision != revision and not self.estimator:
+            self.metric_label.setText(f"약 {dpi:.0f} DPI" if dpi else "DPI 분석 필요")
+            self.estimate_detail.setText(f"{note} · 약 {human_bytes(size)}")
+
+    def _sample_finished(self):
+        revision = self.sampler.revision
+        self.sampler.deleteLater()
+        self.sampler = None
+        if not self.closing and revision != self.revision:
+            self.debounce.start()
 
     def _preview_failed(self, message):
         if self.previewer and self.previewer.assets[0] == self.selected_asset():
@@ -691,8 +716,18 @@ class MainWindow(QMainWindow):
         except CompressionError:
             return
         merge = self.operation.currentIndex() == 1
+        if self.sampler:
+            self.sampler.cancel.set()
+        for path in Path(self.trial_directory.name).iterdir():
+            path.unlink(missing_ok=True)
+        self.trial_cache = None
         self.estimator = Estimator(
-            self.revision, list(self.assets) if merge else [asset], settings, merge, self
+            self.revision,
+            list(self.assets) if merge else [asset],
+            settings,
+            merge,
+            self,
+            cache_path=Path(self.trial_directory.name) / "result",
         )
         self.estimator.ready.connect(self._estimate_ready)
         self.estimator.failed.connect(self._estimate_failed)
@@ -710,6 +745,9 @@ class MainWindow(QMainWindow):
     def _estimate_ready(self, revision, result, size_bytes, compressed):
         if revision != self.revision or self.closing:
             return
+        self.measured_revision = revision
+        self.trial_cache = self.estimator.cached if self.estimator else None
+        self.estimate_title.setText("실제 계산 결과")
         self.after.set_image(compressed)
         dpi = f"{result.dpi_x:.0f} DPI" if result.dpi_x is not None else "벡터 / DPI 없음"
         self.metric_label.setText(dpi)
@@ -814,8 +852,13 @@ class MainWindow(QMainWindow):
 
     def _queue_changed(self):
         self.stack.setCurrentIndex(1 if self.assets else 0)
-        self.queue_title.setText(f"작업 목록  {len(self.assets)}")
-        self.total.setText(human_bytes(self.total_bytes))
+        self.total.setText(
+            f"{len(self.assets)}개 항목 · {human_bytes(self.total_bytes)}"
+            if self.assets
+            else "항목 없음"
+        )
+        for button in (self.up, self.down, self.remove, self.clear_all):
+            button.setEnabled(bool(self.assets))
         self.export_button.setEnabled(bool(self.assets) and not self.loaders)
 
     def _remove(self):
@@ -838,6 +881,7 @@ class MainWindow(QMainWindow):
         self.assets.clear()
         self.asset_paths.clear()
         self.preview_cache.clear()
+        self.sample_cache.clear()
         self.total_bytes = 0
         self.table.setRowCount(0)
         self.table.blockSignals(False)
@@ -889,7 +933,9 @@ class MainWindow(QMainWindow):
         if self.previewer:
             self.previewer.cancel.set()
         name = self.merge_name.text().strip() if self.operation.currentIndex() == 1 else None
-        self.exporter = Exporter(list(self.assets), settings, folder, name, self)
+        self.exporter = Exporter(
+            list(self.assets), settings, folder, name, self, cached=self.trial_cache
+        )
         self.exporter.progress.connect(self._progress)
         self.exporter.saved.connect(self._saved)
         self.exporter.failed.connect(self._log_error)
@@ -899,6 +945,8 @@ class MainWindow(QMainWindow):
         self.exporter.start()
 
     def _busy(self, active: bool):
+        if active and self.sampler:
+            self.sampler.cancel.set()
         for widget in (
             self.settings_card,
             self.queue_card,
@@ -909,6 +957,8 @@ class MainWindow(QMainWindow):
             widget.setEnabled(not active)
         self.export_button.setEnabled(not active and bool(self.assets))
         self.cancel_button.setEnabled(active)
+        self.cancel_button.setVisible(active)
+        self.progress.setVisible(active)
         self.measure_button.setEnabled(not active and bool(self.assets))
 
     def _progress(self, index, total, name):
@@ -929,7 +979,7 @@ class MainWindow(QMainWindow):
         self.log.appendPlainText(f"오류: {message}")
         self.log.show()
 
-    def _export_completed(self, results, errors, report, cancelled):
+    def _export_completed(self, results, errors, cancelled):
         self.progress.setRange(0, 100)
         self.progress.setValue(0 if cancelled or (errors and not results) else 100)
         status = "완료"
@@ -938,8 +988,6 @@ class MainWindow(QMainWindow):
         if cancelled:
             status = "취소됨"
         self.status.setText(f"{status} · {len(results)}개 저장 · {len(errors)}개 오류")
-        if report:
-            self.log.appendPlainText(f"결과 보고서: {report}")
 
     def _export_finished(self):
         self.exporter.deleteLater()
@@ -969,7 +1017,13 @@ class MainWindow(QMainWindow):
         self.debounce.stop()
         running = [
             worker
-            for worker in [self.estimator, self.previewer, self.exporter, *self.loaders]
+            for worker in [
+                self.estimator,
+                self.previewer,
+                self.sampler,
+                self.exporter,
+                *self.loaders,
+            ]
             if worker and worker.isRunning()
         ]
         if running:
@@ -979,6 +1033,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             QTimer.singleShot(150, self.close)
         else:
+            self.trial_directory.cleanup()
             event.accept()
 
 
@@ -993,8 +1048,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Image Zipper")
     app.setOrganizationName("ImageZipper")
-    app.setFont(QFont("Apple SD Gothic Neo" if sys.platform == "darwin" else "Malgun Gothic", 11))
     configure_theme(app)
+    app.styleHints().colorSchemeChanged.connect(lambda _: configure_theme(app))
     window = MainWindow()
     window.show()
     paths = [Path(arg) for arg in sys.argv[1:] if not arg.startswith("-")]
